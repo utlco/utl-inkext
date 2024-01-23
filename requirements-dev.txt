@@ -1,0 +1,11 @@
+black
+mypy
+pylint
+ruff
+pytest
+docutils
+sphinx
+sphinx-autobuild
+sphinx_rtd_theme
+-e ../utl-geom2d
+-e ./
