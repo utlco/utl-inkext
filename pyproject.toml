@@ -132,14 +132,13 @@ select = [
 extend-ignore = [
     "ANN101", # self annotated... good grief
     "COM812", # trailing comma missing
-    "D107", # Missing docstring in `__init__`
+    # "D107", # Missing docstring in `__init__`
     "E203", # Flake8 bug re : spacing
     "PLR2004", # Magic value used
     "PLR0904", # too many methods
     "PLR0917", # too many positional arguments
     "PLR0913", # Too many arguments to function call (6 > 5)
     "PLR6301", # method could be a function
-    "Q000", # Double quotes preferred
     "TRY003", # long msg outside exc cls
     "TRY400", # Use `logging.exception` instead of `logging.error`
 ]
@@ -157,9 +156,14 @@ extend-exclude = [
 convention = "google"
 
 [tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]
+"__init__.py" = ["F401", "D107"]
 "install.py" = ["T201", "ANN401"]
 "svg.py" = ["PLR0914"]
+
+[tool.ruff.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "single"
+multiline-quotes = "double"
 
 [tool.mypy]
 mypy_path = "./src"

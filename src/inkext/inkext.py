@@ -273,7 +273,7 @@ class InkscapeExtension:
 
         try:
             if self.options.output_file:
-                with self.options.outputfile.open('w', encoding='utf8') as f:
+                with self.options.output_file.open('w', encoding='utf8') as f:
                     self.svg.write_document(f)
             else:
                 self.svg.write_document(sys.stdout)
@@ -557,21 +557,23 @@ def output_path(
     if not path.parent.parts and default_parent:
         path = pathlib.Path(default_parent, path)
 
+    path = resolve_path(path)
+
     if auto_incr:
-        pattern = re.compile(f'{path.stem} ([0-9]+){path.suffix}$')
+        pattern = re.compile(f'{path.stem}.([0-9]+){path.suffix}$')
         # Get the highest numeric suffix from existing files (if any).
         # This seems overly complicated but it takes care of the case
         # where the user deletes a file in the middle of the
         # sequence, which guarantees the newest file will always
         # have the highest numeric suffix.
         num = 0
-        for f in path.parent.glob(f'{path.stem}*{path.suffix}'):
-            m = pattern.match(str(f))
+        for file in path.parent.glob(f'{path.stem}*{path.suffix}'):
+            m = pattern.match(file.name)
             if m:
                 num = max(num, int(m.group(1)) + 1)
-        path = path.with_stem(f'{path.stem} {num:0{ndigits}d}')
+        path = path.with_stem(f'{path.stem}-{num:0{ndigits}d}')
 
-    return resolve_path(path)
+    return path
 
 
 def resolve_path(path: str | os.PathLike) -> pathlib.Path:

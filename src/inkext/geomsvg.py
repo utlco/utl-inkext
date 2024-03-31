@@ -29,11 +29,17 @@ TGeom: TypeAlias = Union[
     geom2d.CubicBezier,
 ]
 
+TPathGeom: TypeAlias = Union[
+    geom2d.Line,
+    geom2d.Arc,
+    geom2d.CubicBezier,
+]
+
 
 def svg_to_geometry(
     svg_elements: Iterable[tuple[TElement, TMatrix]],
     parent_transform: TMatrix | None = None,
-) -> list[Sequence[geom2d.Line | geom2d.Arc | geom2d.CubicBezier]]:
+) -> list[Sequence[TPathGeom]]:
     """Convert the SVG shape elements to geometry objects.
 
     Converts SVG shape elements to Line, Arc, and/or CubicBezier segments,

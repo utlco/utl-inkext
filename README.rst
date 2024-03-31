@@ -7,15 +7,19 @@ inkext
 * License: LGPL v3
 * Python: 3.9+
 
-Simple Inkscape python extension biolerplate package.
+Simple python extension biolerplate package for Inkscape 1.2+.
 
-This is basically a rewrite of the python extension framework that shipped
-with Inkscape 0.91. The original excuse for the rewrite was that the Inkscape
+This is basically a rewrite of the original python extension framework that
+shipped with Inkscape 0.91.
+The original excuse for the rewrite was that the Inkscape
 framework (at the time) was poorly documented,
 was missing a lot of functionality that I needed,
 had odd behavior with regards to document size/viewport/units,
 was python2.7 only, and broke some extensions (mainly my own) when updating
 from .91 to .92 and then again to 1.x.
+
+There are no dependencies on any Inkscape packages so extensions
+can be run from the command line without having Inkscape installed.
 
 The current Inkscape Python package
 `inkex <https://inkscape.gitlab.io/extensions/documentation/>`
