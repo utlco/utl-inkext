@@ -12,7 +12,7 @@ from geom2d import transform2d
 from . import svg
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from geom2d.transform2d import TMatrix
     from typing_extensions import TypeAlias
@@ -36,8 +36,46 @@ TPathGeom: TypeAlias = Union[
 ]
 
 
+def path_to_polypath(path: Iterable[TPathGeom]) -> Iterator[geom2d.Line]:
+    """Convert a path to a polypath (sequence of Lines).
+
+    Arc and CubicBezier segments are converted to simple
+    Line segments using the end points.
+
+    Args:
+        path: An iterable of path segments.
+
+    Returns:
+        A polypath as an iterable of Line segments.
+    """
+    for segment in path:
+        if isinstance(segment, geom2d.Line):
+            yield segment
+        else:
+            # TODO: Approximate Arc and CubicBeziers with Lines...
+            yield geom2d.Line(segment.p1, segment.p2)
+
+
+def path_to_polyline(path: Iterable[TPathGeom]) -> Iterator[geom2d.P]:
+    """Convert a path to a polypath (sequence of Lines).
+
+    Arc and CubicBezier segments are converted to simple
+    Line segments using the end points.
+
+    Args:
+        path: An iterable of path segments.
+
+    Returns:
+        A polypath as an iterable of Line segments.
+    """
+    segment: TPathGeom
+    for segment in path:
+        yield segment.p1
+    yield segment.p2
+
+
 def svg_to_geometry(
-    svg_elements: Iterable[tuple[TElement, TMatrix]],
+    svg_elements: Iterable[tuple[TElement, TMatrix | None]],
     parent_transform: TMatrix | None = None,
 ) -> list[Sequence[TPathGeom]]:
     """Convert the SVG shape elements to geometry objects.
@@ -68,7 +106,7 @@ def svg_to_geometry(
 
 
 def svg_to_geometry_el(
-    svg_elements: Iterable[tuple[TElement, TMatrix]],
+    svg_elements: Iterable[tuple[TElement, TMatrix | None]],
     parent_transform: TMatrix | None = None,
     ellipse_to_bezier: bool = True,
 ) -> list[Sequence[TGeom]]:
@@ -93,6 +131,7 @@ def svg_to_geometry_el(
     """
     path_list: list[Sequence[TGeom]] = []
     for element, element_transform in svg_elements:
+        # logger.debug('element: %s %s', element.get('id'), element_transform)
         transformed_paths = svg_element_to_geometry(
             element,
             element_transform=element_transform,
@@ -171,19 +210,19 @@ def svg_element_to_geometry(  # noqa: PLR0912
         # Create a transform matrix that is composed of the
         # parent transform and the element transform
         # so that control points are in absolute coordinates.
-        if element_transform is None:
+        if not element_transform:
             element_transform = parent_transform
-        elif parent_transform is not None:
+        elif parent_transform:
             element_transform = transform2d.compose_transform(
                 parent_transform, element_transform
             )
-        if element_transform is not None:
+        if element_transform:
             x_subpath_list = []
             for subpath in subpath_list:
                 x_subpath = [
                     segment.transform(element_transform)
                     for segment in subpath
-                    # if segment.p1 != segment.p2
+                    if segment.p1 != segment.p2
                 ]
                 # x_subpath = []
                 # for segment in subpath:
@@ -195,7 +234,7 @@ def svg_element_to_geometry(  # noqa: PLR0912
     return subpath_list
 
 
-def parse_path_geom(
+def parse_path_geom(  # noqa: PLR0912
     path_data: str, ellipse_to_bezier: bool = True
 ) -> list[Sequence[TGeom]]:
     """Parse SVG path data and convert to geometry objects.
@@ -212,43 +251,47 @@ def parse_path_geom(
     """
     subpath: list[TGeom] = []
     subpath_list: list[Sequence[TGeom]] = []
-    p1 = (0.0, 0.0)
+    p1 = geom2d.P(0.0, 0.0)
     for cmd, params in svg.parse_path(path_data):
-        p2 = (params[-2], params[-1])
+        p2 = geom2d.P(params[-2], params[-1])
+        if p1 == p2:
+            # Ignore zero-length segments (coincindent points)
+            continue
         if cmd == 'M':
             # Start of path or sub-path
             if subpath:
                 subpath_list.append(subpath)
                 subpath = []
         elif cmd == 'L':
-            # Toss zero-length lines (coincindent points)
-            if p1 != p2:
-                subpath.append(geom2d.Line(p1, p2))
+            subpath.append(geom2d.Line(p1, p2))
         elif cmd == 'A':
             rx = params[0]
             ry = params[1]
             phi = params[2]
             large_arc = params[3]
             sweep_flag = params[4]
+            if geom2d.is_zero(rx) or geom2d.is_zero(ry):
+                subpath.append(geom2d.Line(p1, p2))
+                continue
             elliptical_arc = geom2d.ellipse.EllipticalArc.from_endpoints(
-                p1, p2, rx, ry, large_arc, sweep_flag, phi
+                p1, p2, rx, ry, phi, large_arc, sweep_flag
             )
-            if elliptical_arc is None:
+            if not elliptical_arc:
                 # Parameters must be degenerate...
                 # Try just making a line
-                logger.debug('Degenerate arc...')
+                logger.debug('Degenerate arc: %s', path_data)
                 subpath.append(geom2d.Line(p1, p2))
-            elif geom2d.float_eq(rx, ry):
+            elif elliptical_arc.is_circle():
                 # If it's a circular arc then create an Arc using
                 # the previously computed ellipse parameters.
-                segment = geom2d.Arc(
+                arc = geom2d.Arc(
                     p1,
                     p2,
-                    rx,
+                    elliptical_arc.rx,
                     elliptical_arc.sweep_angle,
-                    elliptical_arc.center,
+                    center=elliptical_arc.center,
                 )
-                subpath.append(segment)
+                subpath.append(arc)
             elif ellipse_to_bezier:
                 # Convert the elliptical arc to cubic Beziers
                 subpath.extend(geom2d.bezier.bezier_ellipse(elliptical_arc))
@@ -401,17 +444,17 @@ def convert_polygon(element: TElement) -> list[geom2d.Line]:
     return segments
 
 
-def polypath_to_svg_path(polypath: Sequence[TGeom]) -> str:
-    """Convert a polypath to an SVG 'D' path.
-
-    Converts a list of connected Lines, Arcs, CubicBeziers
-    to an SVG 'd' path string.
-    """
-    pathparts: list[str] = []
-    for segment in polypath:
-        if isinstance(segment, geom2d.Ellipse):
-            raise TypeError('Ellipse in polypath.')
-        if not pathparts:
-            pathparts.append(f'M {segment.p1.x} {segment.p1.y}')
-        pathparts.append(segment.to_svg_path(mpart=False))
-    return ' '.join(pathparts)
+# def polypath_to_svg_path(polypath: Sequence[TGeom]) -> str:
+#    """Convert a polypath to an SVG 'D' path.
+#
+#    Converts a list of connected Lines, Arcs, CubicBeziers
+#    to an SVG 'd' path string.
+#    """
+#    pathparts: list[str] = []
+#    for segment in polypath:
+#        if isinstance(segment, geom2d.Ellipse):
+#            raise TypeError('Ellipse in polypath.')
+#        if not pathparts:
+#            pathparts.append(f'M {segment.p1.x} {segment.p1.y}')
+#        pathparts.append(segment.to_svg_path(mpart=False))
+#    return ' '.join(pathparts)
