@@ -18,7 +18,7 @@ from lxml import etree
 from . import css
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from geom2d.transform2d import TMatrix
     from typing_extensions import Self, TypeAlias
@@ -28,10 +28,13 @@ logger = logging.getLogger(__name__)
 
 # : SVG Namespaces
 SVG_NS = {
-    # None: 'http://www.w3.org/2000/svg',
+    '': 'http://www.w3.org/2000/svg',
     'svg': 'http://www.w3.org/2000/svg',
     'xlink': 'http://www.w3.org/1999/xlink',
     'xml': 'http://www.w3.org/XML/1998/namespace',
+    'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+    'cc': 'http://creativecommons.org/ns#',
+    'dc': 'http://purl.org/dc/elements/1.1/',
 }
 
 
@@ -302,13 +305,16 @@ class SVGContext:
             from_unit = self.doc_units
         return unit_convert(scalar, from_unit=from_unit, to_unit=to_unit)
 
-    def write_document(self, stream: TextIO) -> None:
+    def write_document(
+        self, stream: TextIO, pretty_print: bool = False
+    ) -> None:
         """Write the SVG document to a stream output."""
         # Pretty print if in debug mode
-        pp = logger.getEffectiveLevel() == logging.DEBUG
         stream.write('<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n')
         data = etree.tostring(
-            self.document.getroot(), encoding='unicode', pretty_print=pp
+            self.document.getroot(),
+            encoding='unicode',
+            pretty_print=pretty_print,
         )
         stream.write(data)
 
@@ -318,10 +324,7 @@ class SVGContext:
         Args:
             precision: The number of digits after the decimal point.
         """
-        if precision is None:
-            self._fmt_float = '{}'
-        else:
-            self._fmt_float = f'{{:.{precision}f}}'
+        self._fmt_float = '{}' if precision is None else f'{{:.{precision}f}}'
         self._fmt_point = f'{self._fmt_float}, {self._fmt_float}'
         self._fmt_move = f'M {self._fmt_point}'
         self._fmt_line = f'M {self._fmt_point} L {self._fmt_point}'
@@ -346,11 +349,11 @@ class SVGContext:
         Returns:
             A node if found otherwise None.
         """
-        return self.document.find(f'//*[@id="{node_id}"]')
+        return get_node_by_id(self.document, node_id)
 
     def get_element_transform(
         self, node: TElement, root: TElement | None = None
-    ) -> TMatrix:
+    ) -> TMatrix | None:
         """Get the combined transform of the element and its parents.
 
         Args:
@@ -358,8 +361,7 @@ class SVGContext:
             root: The root element to stop searching, or document root if None.
 
         Returns:
-            The combined transform matrix or the identity matrix
-            if none found.
+            The combined transform matrix or None.
         """
         if root is None:
             root = self.docroot
@@ -367,14 +369,16 @@ class SVGContext:
         transform_attr = node.get('transform')
         if transform_attr:
             node_transform = self.parse_transform_attr(transform_attr)
-            return transform2d.compose_transform(
-                parent_transform, node_transform
-            )
+            if parent_transform and node_transform:
+                return transform2d.compose_transform(
+                    parent_transform, node_transform
+                )
+            return node_transform
         return parent_transform
 
     def get_parent_transform(
         self, node: TElement, root: TElement | None = None
-    ) -> TMatrix:
+    ) -> TMatrix | None:
         """Get the combined transform of the node's parents.
 
         Args:
@@ -386,13 +390,19 @@ class SVGContext:
         """
         if root is None:
             root = self.docroot
-        matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        #matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        matrix: TMatrix | None = None
         parent = node.getparent()
         while parent is not None and parent is not root:
             parent_transform_attr = parent.get('transform')
             if parent_transform_attr is not None:
                 parent_matrix = self.parse_transform_attr(parent_transform_attr)
-                matrix = transform2d.compose_transform(parent_matrix, matrix)
+                if parent_matrix and matrix:
+                    matrix = transform2d.compose_transform(
+                        parent_matrix, matrix
+                    )
+                else:
+                    matrix = parent_matrix
             parent = parent.getparent()
         return matrix
 
@@ -444,19 +454,19 @@ class SVGContext:
 
         return True
 
-    def parse_transform_attr(self, stransform: str | None) -> TMatrix:
+    def parse_transform_attr(self, stransform: str | None) -> TMatrix | None:
         """Parse an SVG transform attribute.
 
         Args:
             stransform: A string containing the SVG transform list.
 
         Returns:
-            A single affine transform matrix.
+            A single affine transform matrix or None.
         """
+        if not stransform:
+            return None
         if stransform:
             stransform = stransform.strip()
-        if not stransform:
-            return transform2d.IDENTITY_MATRIX
         transforms = self._TRANSFORM_RE.findall(stransform)
         matrices = []
         for transform, args in transforms:
@@ -490,12 +500,16 @@ class SVGContext:
             if matrix is not None:
                 matrices.append(matrix)
 
-        # Compose all the transforms into one matrix
-        result_matrix = transform2d.IDENTITY_MATRIX
-        for matrix in matrices:
-            result_matrix = transform2d.compose_transform(result_matrix, matrix)
+        if matrices:
+            # Compose all the transforms into one matrix
+            result_matrix = matrices[0]
+            for matrix in matrices[1:]:
+                result_matrix = transform2d.compose_transform(
+                    result_matrix, matrix
+                )
+            return result_matrix
 
-        return result_matrix
+        return None
 
     def scale_inline_style(self, inline_style: str) -> str:
         """Rescale inline style quantities to user units.
@@ -570,7 +584,7 @@ class SVGContext:
 
     def create_clip_path(self, path: TElement) -> TElement | None:
         """Create an SVG clipPath."""
-        defs = self.docroot.find(svg_ns('defs'))
+        defs = self.docroot.find(f'.//{svg_ns("defs")}')
         if defs:
             node_id = self.generate_id('clipPath')
             attrs = {'id': node_id, 'clipPathUnits': 'userSpaceOnUse'}
@@ -653,43 +667,37 @@ class SVGContext:
         center: TPoint,
         rx: float,
         ry: float,
-        angle: float,
+        phi: float = 0,
+        start_angle: float = 0,
+        sweep_angle: float = 0,
         style: str | None = None,
         parent: TElement | None = None,
     ) -> TElement:
         """Create an SVG ellipse."""
-        # See http://www.w3.org/TR/SVG/implnote.html#ArcImplementationNotes
-        # for converting center parameterization to SVG arc
-        # Normalize angle first:
-        angle = angle - (2 * math.pi) * math.floor(angle / (2 * math.pi))
-        cx, cy = center
-        x1 = rx * math.cos(angle) + cx
-        y1 = rx * math.sin(angle) + cy
-        x2 = rx * math.cos(angle + math.pi) + cx
-        y2 = rx * math.sin(angle + math.pi) + cy
-        m = self._fmt_move.format(self._scale(x1), self._scale(y1))
-        a1 = self._fmt_arc.format(
-            self._scale(rx),
-            self._scale(ry),
-            math.degrees(angle),
-            0,
-            1,
-            self._scale(x2),
-            self._scale(y2),
+        # If phi, start_angle, sweep_angle are all 0 then assume
+        # this is a simple <ellipse> element.
+        is_ellipse = geom2d.is_zero(start_angle) and geom2d.is_zero(sweep_angle)
+        # if geom2d.is_zero(phi) and not is_arc:
+        if is_ellipse:
+            attrs = {
+                'rx': self._fmt_float.format(self._scale(rx)),
+                'ry': self._fmt_float.format(self._scale(ry)),
+                'cx': self._fmt_float.format(center[0]),
+                'cy': self._fmt_float.format(center[1]),
+            }
+            if not geom2d.is_zero(phi):
+                m = transform2d.matrix_rotate(phi, origin=center)
+                attrs['transform'] = transform_attr(m)
+            return self._create_svgelem(
+                'ellipse', attrs, style=style, parent=parent
+            )
+
+        # Otherwise it's an elliptical arc and rendered as a path
+        arc = geom2d.ellipse.EllipticalArc.from_center(
+            center, rx, ry, phi, start_angle, sweep_angle
         )
-        a2 = self._fmt_arc.format(
-            self._scale(rx),
-            self._scale(ry),
-            math.degrees(angle),
-            0,
-            1,
-            self._scale(x1),
-            self._scale(y1),
-        )
-        attrs = {
-            'd': m + ' ' + a1 + ' ' + a2,
-        }
-        return self.create_path(attrs, style, parent)
+        attrs = {'d': arc.to_svg_path(scale=self.view_scale, add_move=True)}
+        return self._create_svgelem('path', attrs, style=style, parent=parent)
 
     def create_line(
         self,
@@ -709,7 +717,7 @@ class SVGContext:
         if attrs is None:
             attrs = {}
         attrs['d'] = line_path
-        return self.create_path(attrs, style, parent)
+        return self._create_svgelem('path', attrs, style, parent)
 
     def create_circular_arc(
         self,
@@ -737,7 +745,7 @@ class SVGContext:
         if attrs is None:
             attrs = {}
         attrs['d'] = m + ' ' + a
-        return self.create_path(attrs, style, parent)
+        return self._create_svgelem('path', attrs, style, parent)
 
     def create_curve(
         self,
@@ -764,7 +772,7 @@ class SVGContext:
         mpart = self._fmt_move.format(self._scale(p1[0]), self._scale(p1[1]))
         cpart = self._format_curve(cp1, cp2, p2)
         attrs['d'] = f'{mpart} {cpart}'
-        return self.create_path(attrs, style, parent)
+        return self._create_svgelem('path', attrs, style, parent)
 
     def _format_curve(
         self,
@@ -793,7 +801,7 @@ class SVGContext:
         """Create an SVG path describing a polygon.
 
         Args:
-            vertices: An sequence of 2D polygon vertices.
+            vertices: A sequence of 2D polygon vertices.
                 A vertice being a tuple containing x,y coordicates.
             close_polygon: Close the polygon if it isn't already.
                 Default is True.
@@ -816,10 +824,12 @@ class SVGContext:
             ),
             'L',
         ]
-        d.extend([
-            self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
-            for p in vertices[1:]
-        ])
+        d.extend(
+            [
+                self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
+                for p in vertices[1:]
+            ]
+        )
         # for p in vertices[1:]:
         #    d.append(
         #        self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
@@ -835,7 +845,71 @@ class SVGContext:
         if attrs is None:
             attrs = {}
         attrs['d'] = ' '.join(d)
-        return self.create_path(attrs, style, parent)
+        return self._create_svgelem('path', attrs, style, parent)
+
+    def create_polygons(
+        self,
+        polygons: Iterable[Sequence[TPoint]],
+        close_polygon: bool = True,
+        close_path: bool = False,
+        style: str | None = None,
+        parent: TElement | None = None,
+        attrs: dict[str, str] | None = None,
+    ) -> TElement | None:
+        """Create an SVG path describing a polygon.
+
+        Args:
+            polygons: A collection of polygons,
+            each a sequence of 2D polygon vertices.
+                A vertice being a tuple containing x,y coordicates.
+            close_polygon: Close the polygon if it isn't already.
+                Default is True.
+            close_path: Close and join the the path ends by
+                appending 'Z' to the end of the path ('d') attribute.
+                Default is False.
+            style: A CSS style string.
+            parent: The parent element (or Inkscape layer).
+            attrs: Dictionary of SVG element attributes.
+
+        Returns:
+            An SVG path Element node, or None if the list of vertices is empty.
+        """
+        if not polygons:
+            return None
+        d = []
+        for vertices in polygons:
+            d += [
+                'M',
+                self._fmt_point.format(
+                    self._scale(vertices[0][0]), self._scale(vertices[0][1])
+                ),
+                'L',
+            ]
+            d.extend(
+                [
+                    self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
+                    for p in vertices[1:]
+                ]
+            )
+            if geom2d.P(vertices[0]) != vertices[-1]:
+                if close_polygon:
+                    if close_path:
+                        d.append('Z')
+                    else:
+                        d.append(
+                            self._fmt_point.format(
+                                self._scale(vertices[0][0]),
+                                self._scale(vertices[0][1]),
+                            )
+                        )
+            elif close_path:
+                del d[-1]
+                d.append('Z')
+
+        if attrs is None:
+            attrs = {}
+        attrs['d'] = ' '.join(d)
+        return self._create_svgelem('path', attrs, style, parent)
 
     def create_polypath(
         self,
@@ -881,12 +955,14 @@ class SVGContext:
                 # Assume this is a line segment with two endpoints:
                 # ((x1, y1), (x2, y2))
                 p2 = segment[1]
-                d.extend((
-                    'L',
-                    self._fmt_point.format(
-                        self._scale(p2[0]), self._scale(p2[1])
-                    ),
-                ))
+                d.extend(
+                    (
+                        'L',
+                        self._fmt_point.format(
+                            self._scale(p2[0]), self._scale(p2[1])
+                        ),
+                    )
+                )
             elif isinstance(segment, geom2d.CubicBezier) or len(segment) == 4:
                 # Assume this is a cubic Bezier:
                 # ((x1, y1), (cx1, cx1), (cx2, cx2), (x2, y2))
@@ -894,7 +970,8 @@ class SVGContext:
                 cp2 = segment[2]
                 p2 = segment[3]
                 d.append(self._format_curve(cp1, cp2, p2))
-            elif isinstance(segment, geom2d.Line) or len(segment) == 5:
+            # elif isinstance(segment, geom2d.Line) or len(segment) == 5:
+            elif isinstance(segment, geom2d.Arc) or len(segment) == 5:
                 # Assume this is an arc segment:
                 # ((x1, y1), (x2, y2), radius, angle, center)
                 p2 = segment[1]
@@ -920,7 +997,7 @@ class SVGContext:
         if attrs is None:
             attrs = {}
         attrs['d'] = ' '.join(d)
-        return self.create_path(attrs, style, parent)
+        return self._create_svgelem('path', attrs, style, parent)
 
     def create_simple_marker(
         self,
@@ -934,13 +1011,13 @@ class SVGContext:
 
         The glyph Element is placed under the document root.
         """
-        defs = self.docroot.find(svg_ns('defs'))
+        defs = self.docroot.find(f'.//{svg_ns("defs")}')
         if defs is None:
             defs = etree.SubElement(self.docroot, svg_ns('defs'))
         elif replace:
             # If a marker with the same id already exists
             # then remove it first.
-            node = defs.find(f'*[@id="{marker_id}"]')
+            node = defs.find(f'.//*[@id="{marker_id}"]')
             if node is not None:
                 parent = node.getparent()
                 if parent is not None:
@@ -967,18 +1044,19 @@ class SVGContext:
         )
         return marker
 
-    def create_path(
+    def _create_svgelem(
         self,
+        tag: str,
         attrs: dict[str, str],
         style: str | None = None,
         parent: TElement | None = None,
     ) -> TElement:
-        """Create an SVG path element."""
+        """Create an SVG element."""
         if parent is None:
             parent = self.current_parent
         if style:
             attrs['style'] = style
-        return etree.SubElement(parent, svg_ns('path'), attrs)
+        return etree.SubElement(parent, svg_ns(tag), attrs)
 
     def create_text(
         self,
@@ -1055,6 +1133,54 @@ class SVGContext:
         return (p[0] * self.view_scale, p[1] * self.view_scale)
 
 
+def geompath_to_svgpath(
+    path: Iterable[
+        geom2d.Line | geom2d.Arc | geom2d.EllipticalArc | geom2d.CubicBezier
+    ],
+    scale: float = 1,
+    close_path: bool = False,
+) -> str | None:
+    """Create an SVG path from a sequence of geometry segments.
+
+    Args:
+        path: A sequence of Line, Arc, EllipticalArc, or CubicBezier segments.
+        scale: SVG scaling factor. Default is 1.
+        close_path: Close and join the the path ends by
+            appending 'Z' to the end of the path ('d') attribute.
+            Default is False.
+
+    Returns:
+        An SVG path attribute value (the 'd' part).
+    """
+    if not path:
+        return None
+
+    it = iter(path)
+    try:
+        first_segment = next(it)
+        first_point = first_segment.p1
+        last_point = first_segment.p2
+    except StopIteration:
+        pass
+    else:
+        dparts = [f'M {first_point.to_svg(scale=scale)}']
+        prev_type: type = geom2d.Line
+        for segment in path:
+            add_prefix = bool(prev_type != type(segment))
+            dparts.append(
+                segment.to_svg_path(scale=scale, add_prefix=add_prefix)
+            )
+            prev_type = type(segment)
+            last_point = segment.p2
+
+        if close_path and first_point != last_point:
+            dparts.append('Z')
+
+        return ' '.join(dparts)
+
+    return ''  # empty path
+
+
 DIGIT_EXP = '0123456789eE'
 COMMA_WSP = ', \t\n\r\f\v'
 DRAWTO_COMMAND = 'MmZzLlHhVvCcSsQqTtAa'
@@ -1119,6 +1245,10 @@ def path_tokenizer(path_data: str) -> Iterator[tuple[str, bool]]:
         yield (entity, False)  # Number parameter
 
 
+def _radians(a: str) -> float:
+    return math.radians(float(a))
+
+
 # This parser metadata structure is shamelessly borrowed from
 # Aaron Spike's simplepath parser with minor modifications.
 #
@@ -1143,7 +1273,7 @@ _PATHDEFS: PathdefType = {
     'T': ('Q', 2, (float, float), (0, 1)),
     'A': (
         'A', 7,
-        (float, float, float, int, int, float, float),
+        (float, float, _radians, int, int, float, float),
         (-1, -1, -1, -1, -1, 0, 1)
     ),
     'Z': ('L', 0, (), ()),
@@ -1371,7 +1501,7 @@ def random_id(prefix: str = '_svg', rootnode: TElement | None = None) -> str:
     return id_attr
 
 
-def get_node_by_id(root: TElement, node_id: str) -> TElement | None:
+def get_node_by_id(root: TElement | TDocument, node_id: str) -> TElement | None:
     """Find an element in the specified element tree by id attribute.
 
     Args:
@@ -1386,7 +1516,7 @@ def get_node_by_id(root: TElement, node_id: str) -> TElement | None:
 
 def get_node_by_tag(root: TElement, tag: str) -> TElement | None:
     """Find first element having specified tag name."""
-    return root.find(tag)
+    return root.find(f'.//{tag}')
 
 
 def transform_attr(matrix: TMatrix) -> str:
