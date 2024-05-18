@@ -12,7 +12,4 @@ useful for scripting without having to invoke Inkscape, which is expensive.
 
 import importlib.metadata
 
-from .svg import TElement, TDocument
-from .geomsvg import TPathGeom
-
-__version__ = importlib.metadata.version('inkext')
+__version__ = importlib.metadata.version('utl-inkext')
