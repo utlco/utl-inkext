@@ -22,14 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Dictionary of XML namespaces used in Inkscape documents
 INKSCAPE_NS = {
-    #     None: u'http://www.w3.org/2000/svg',
-    #     u'svg': u'http://www.w3.org/2000/svg',
-    #     u'xlink': u'http://www.w3.org/1999/xlink',
-    #     u'xml': u'http://www.w3.org/XML/1998/namespace',
-    #     u'cc': u'http://creativecommons.org/ns#',
-    #     u'ccOLD': u'http://web.resource.org/cc/',
-    #     u'dc': u'http://purl.org/dc/elements/1.1/',
-    #     u'rdf': u'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     'inkscape': 'http://www.inkscape.org/namespaces/inkscape',
     'sodipodi': 'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
 }
@@ -40,6 +32,7 @@ INKSCAPE_NS.update(svg.SVG_NS)
 UTLCO_NS = {
     'utlco': 'http://www.utlco.com/namespaces/utlco',
 }
+# INKSCAPE_NS.update(UTLCO_NS)
 
 
 def inkscape_ns(tag: str) -> str:
@@ -91,22 +84,21 @@ class InkscapeSVGContext(svg.SVGContext):
         self.doc_name = self.docroot.get('sodipodi:docname', 'untitled.svg')
         self.ruler_units = self.doc_units
 
-        basedoc = self.find('//sodipodi:namedview')
+        basedoc = self.find('.//sodipodi:namedview')
         if basedoc is not None:
             self.ruler_units = basedoc.get(
                 inkscape_ns('document-units'),
                 basedoc.get('units', self.doc_units),
             )
             # Current Inkscape layer
-            self._current_layer_id = basedoc.get(inkscape_ns('current-layer'))
+            layer_id = basedoc.get(inkscape_ns('current-layer'))
+            if layer_id:
+                layer = self.get_node_by_id(layer_id)
+                if layer is not None:
+                    self.current_parent = layer
 
         # Document clipping rectangle
         self.cliprect = geom2d.Box((0, 0), self.get_document_size())
-
-        layer = self.get_selected_layer()
-        if layer is None:
-            layer = self.docroot
-        self.set_default_parent(layer)
 
     def margin_cliprect(self, mtop: float, *args: float) -> geom2d.Box:
         """Create a clipping rectangle for document margins.
@@ -148,20 +140,20 @@ class InkscapeSVGContext(svg.SVGContext):
         Args:
             color (string): A CSS color (ie. '#ffffff')
         """
-        basedoc = self.find('//sodipodi:namedview')
+        basedoc = self.find('.//sodipodi:namedview')
         if basedoc:
             basedoc.set('pagecolor', color)
 
-    def get_selected_layer(self) -> TElement | None:
-        """Get the currently selected Inkscape layer element.
-
-        Returns:
-            The currently selected layer element or None
-            if no layers are selected.
-        """
-        if self._current_layer_id is not None:
-            return self.get_node_by_id(self._current_layer_id)
-        return None
+    #    def get_selected_layer(self) -> TElement | None:
+    #        """Get the currently selected Inkscape layer element.
+    #
+    #        Returns:
+    #            The currently selected layer element or None
+    #            if no layers are selected.
+    #        """
+    #        if self._current_layer_id is not None:
+    #            return self.get_node_by_id(self._current_layer_id)
+    #        return None
 
     def find_layer(self, layer_name: str) -> TElement | None:
         """Find an Inkscape layer by Inkscape layer name.
@@ -172,7 +164,7 @@ class InkscapeSVGContext(svg.SVGContext):
         :param layer_name: The Inkscape layer name to find.
         :return: The layer Element node or None.
         """
-        return self.find(f'//svg:g[@inkscape:label="{layer_name}"]')
+        return self.find(f'.//svg:g[@inkscape:label="{layer_name}"]')
 
     #    def clear_layer(self, layer_name):
     #        """Delete the contents of the specified layer.
@@ -226,8 +218,8 @@ class InkscapeSVGContext(svg.SVGContext):
 
         if layer is None:
             layer_attrs = {
-                inkscape_ns('groupmode'): 'layer',
                 inkscape_ns('label'): layer_name,
+                inkscape_ns('groupmode'): 'layer',
             }
             if tag is not None:
                 layer_attrs[utlco_ns('tag')] = tag
@@ -238,6 +230,7 @@ class InkscapeSVGContext(svg.SVGContext):
                 transfrm = f'translate(0, {self.view_height:g}) scale(1, -1)'
                 layer_attrs['transform'] = transfrm
             layer = etree.SubElement(parent, svg.svg_ns('g'), layer_attrs)
+            # layer = etree.SubElement(parent, 'g', layer_attrs)
         elif clear:
             # Remove subelements
             del layer[:]
@@ -334,12 +327,12 @@ class InkscapeSVGContext(svg.SVGContext):
 
     def get_shape_elements(
         self,
-        rootnode: Iterable[TElement],
+        elements: Iterable[TElement] | None = None,
         shapetags: Iterable[str] = _DEFAULT_SHAPES,
         parent_transform: tuple | None = None,
         skip_layers: list[str] | None = None,
         accumulate_transform: bool = True,
-    ) -> list[tuple[TElement, geom2d.TMatrix]]:
+    ) -> list[tuple[TElement, geom2d.TMatrix | None]]:
         """Get all shape elements in an element tree.
 
         Traverse a tree of SVG nodes and flatten it to a list of
@@ -350,15 +343,14 @@ class InkscapeSVGContext(svg.SVGContext):
         Hidden elements are ignored.
 
         Args:
-            rootnode: The root of the node tree to traverse and flatten.
-                This can be the document root, a layer,
-                or any iterable collection of element nodes.
+            elements: An iterable collection of element nodes.
+                This will be all top level elements (docroot) by default.
             shapetags: List of shape element tags that can be fetched.
                 Default is ('path', 'rect', 'line', 'circle',
                 'ellipse', 'polyline', 'polygon').
                 Anything else is ignored.
-            parent_transform: Transform matrix to add to each node's
-                transforms. If None the node's parent transform is used.
+            parent_transform: Transform matrix to add to each node's transforms.
+                If None the node's parent transform (if any) is used.
             skip_layers: A list of layer names (as regexes) to ignore
             accumulate_transform: Apply parent transform(s) to element node
                 if True. Default is True.
@@ -367,17 +359,11 @@ class InkscapeSVGContext(svg.SVGContext):
             A possibly empty list of 2-tuples consisting of
             SVG element and accumulated transform.
         """
-        if etree.iselement(rootnode):
-            return self._get_shape_nodes_recurs(
-                rootnode,
-                shapetags,
-                parent_transform,
-                True,
-                skip_layers,
-                accumulate_transform,
-            )
+        if elements is None:
+            elements = self.docroot.iterchildren()
+
         shapes = []
-        for node in rootnode:
+        for node in elements:
             shapes.extend(
                 self._get_shape_nodes_recurs(
                     node,
@@ -398,19 +384,24 @@ class InkscapeSVGContext(svg.SVGContext):
         check_parent: bool,
         skip_layers: list[str] | None,
         accumulate_transform: bool,
-    ) -> list[tuple[TElement, geom2d.TMatrix]]:
+    ) -> list[tuple[TElement, geom2d.TMatrix | None]]:
         """Recursively get all shape elements in an element tree."""
         if not self.node_is_visible(node, check_parent=check_parent):
             return []
-        if parent_transform is None:
-            parent_transform = self.get_parent_transform(node)
-        shapes = []
+
         # first apply the current transform matrix to this node's transform
         node_transform = self.parse_transform_attr(node.get('transform'))
         if accumulate_transform:
-            node_transform = transform2d.compose_transform(
-                parent_transform, node_transform
-            )
+            if parent_transform is None:
+                parent_transform = self.get_parent_transform(node)
+            if not node_transform:
+                node_transform = parent_transform
+            elif parent_transform:
+                node_transform = transform2d.compose_transform(
+                    parent_transform, node_transform
+                )
+
+        shapes = []
         if self.node_is_group(node):
             if self.is_layer(node) and skip_layers:
                 layer_name = self.get_layer_name(node)
@@ -445,9 +436,12 @@ class InkscapeSVGContext(svg.SVGContext):
                     y = float(node.get('y', '0'))
                     if x != 0 or y != 0:
                         translation = transform2d.matrix_translate(x, y)
-                        node_transform = transform2d.compose_transform(
-                            node_transform, translation
-                        )
+                        if node_transform:
+                            node_transform = transform2d.compose_transform(
+                                node_transform, translation
+                            )
+                        else:
+                            node_transform = translation
                     subnodes = self._get_shape_nodes_recurs(
                         refnode,
                         shapetags,
@@ -500,12 +494,13 @@ def create_inkscape_document(
     docroot = document.getroot()
 
     # Add Inkscape-specific elements/attributes...
-    docroot.set(sodipodi_ns('docname'), doc_name if doc_name else 'untitled')
+    docroot.set(sodipodi_ns('docname'), doc_name or 'untitled')
     namedview = etree.SubElement(docroot, sodipodi_ns('namedview'), id='base')
     namedview.set('units', doc_units)
     namedview.set(inkscape_ns('document-units'), doc_units)
     if layer_name:
         layer = etree.SubElement(docroot, svg.svg_ns('g'), id=layer_id)
+        # layer = etree.SubElement(docroot, 'g', id=layer_id)
         layer.set(inkscape_ns('groupmode'), 'layer')
         layer.set(inkscape_ns('label'), layer_name)
         namedview.set(inkscape_ns('current-layer'), layer_id)

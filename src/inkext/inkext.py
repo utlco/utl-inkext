@@ -14,12 +14,12 @@ import re
 import sys
 import time
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import geom2d
 import geom2d.debug
 
-from . import geomsvg, inksvg
+from . import css, geomsvg, inksvg
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -158,13 +158,17 @@ def docunits(value: str | float) -> _DocUnits:
         ) from e
 
 
-def errormsg(msg: str, exit_status: int | None = None) -> None:
+def errormsg(
+    *args: Any,  # noqa: ANN401
+    exit_status: int | None = None,
+    **kwargs: Any,  # noqa: ANN401
+) -> None:
     """Write an error msg to stderr.
 
     Intended for end-user-visible messages (usually error conditions).
     Inkscape displays stderr output in a dialog after the extension runs.
     """
-    sys.stderr.write(msg + '\n')
+    print(*args, file=sys.stderr, **kwargs)  # noqa: T201
     if exit_status is not None:
         sys.exit(exit_status)
 
@@ -231,7 +235,7 @@ class InkscapeExtension:
         # Create log file if specified.
         if self.options.log_create:
             self._create_log(self.options.log_filename, self.options.log_level)
-            logger.info('Invocation: %s', ' '.join(argv if argv else sys.argv))
+            logger.info('Invocation: %s', ' '.join(argv or sys.argv))
 
         # The option to create a new document supersedes the
         # input file option.
@@ -254,7 +258,7 @@ class InkscapeExtension:
                 errormsg(f'Unable to parse SVG input: {e}', exit_status=1)
 
         # Convert display units to doc units once the document is parsed
-        self._post_process_options()
+        self.post_process_options()
 
         # Create debug layer and context if requested
         if self.options.create_debug_layer:
@@ -273,8 +277,9 @@ class InkscapeExtension:
 
         try:
             if self.options.output_file:
+                pp = logger.getEffectiveLevel() == logging.DEBUG
                 with self.options.output_file.open('w', encoding='utf8') as f:
-                    self.svg.write_document(f)
+                    self.svg.write_document(f, pretty_print=pp)
             else:
                 self.svg.write_document(sys.stdout)
         except OSError as e:
@@ -399,11 +404,11 @@ class InkscapeExtension:
         logger.info('HOME = "%s"', os.environ.get('HOME', ''))
         logger.info('PWD = "%s"', os.environ.get('PWD', ''))
         logger.info('DEBUG = "%s"', os.environ.get('DEBUG', ''))
+        logger.info('PYTHONPATH = "%s"\n', os.environ.get('PYTHONPATH', ''))
+
         logger.info('Python version: %s', sys.version)
         logger.info('Python executable: %s', sys.executable)
         logger.info('Python path: [\n%s\n]', ',\n'.join(sys.path))
-        logger.info('PYTHONPATH = "%s"', os.environ.get('PYTHONPATH', ''))
-        logger.info('PYTHONPATH = "%s"', os.environ.get('PYTHONPATH', ''))
         logger.info('Selected ids: %s', ', '.join(self.options.ids))
         logger.info(
             'Selected nodes: %s', ', '.join(self.options.selected_nodes)
@@ -453,7 +458,9 @@ class InkscapeExtension:
         parser.add_argument(
             '--active-tab',
         )
-        parser.add_argument('--output-file', '-o', help=_('Output file.'))
+        parser.add_argument(
+            '--output-file', '-o', type=pathlib.Path, help=_('Output file.')
+        )
         parser.add_argument(
             '--create-debug-layer',
             type=inkbool,
@@ -487,7 +494,7 @@ class InkscapeExtension:
 
         return parser.parse_args(argv)
 
-    def _post_process_options(self) -> None:
+    def post_process_options(self) -> None:
         """Fix CLI option values after parsing SVG document.
 
         Options values that are of type 'docunits' will be converted
@@ -614,3 +621,31 @@ def resolve_path(path: str | os.PathLike) -> pathlib.Path:
         path = home / path
 
     return path.resolve()  # make it absolute
+
+
+def inkrgb_to_styles(
+    fill: tuple[float, ...] | None = None,
+    stroke: tuple[float, ...] | None = None,
+    stroke_width: str | float | None = None,
+) -> dict:
+    """Convert Inkscape INX RGBA values to a style dictionary."""
+    stylemap = {}
+    if fill:
+        color, opacity = css.rgba_to_cssa(fill)
+        if opacity == 0:
+            color = 'none'
+        elif opacity < 1:
+            stylemap['fill-opacity'] = f'{opacity:.3f}'
+        stylemap['fill'] = color
+    if stroke:
+        color, opacity = css.rgba_to_cssa(stroke)
+        if opacity == 0:
+            color = 'none'
+        elif opacity < 1:
+            stylemap['stroke-opacity'] = f'{opacity:.3f}'
+        stylemap['stroke'] = color
+        if stroke_width is not None and opacity > 0:
+            if isinstance(stroke_width, float):
+                stroke_width = f'{stroke_width:.04f}'
+            stylemap['stroke-width'] = stroke_width
+    return stylemap
