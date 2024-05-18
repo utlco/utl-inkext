@@ -1,11 +1,14 @@
-# -----------------------------------------------------------------------------
-# Copyright 2012-2023 Claude Zervas
-# email: claude@utlco.com
-# -----------------------------------------------------------------------------
 """A simple library of functions to parse and format CSS style properties."""
+
+# TODO: This really needs work... Most color parsing is wrong.
+
 from __future__ import annotations
 
 import string
+import typing
+from collections.abc import Sequence
+
+from typing_extensions import TypeAlias
 
 # CSS color names to hex rgb values.
 # See: https://www.w3.org/TR/css3-color/#svg-color
@@ -163,6 +166,9 @@ _CSS_COLORS = {
 # SVG whitespace
 _SVG_WS = ' \t\r\n\f'
 
+TRGB: TypeAlias = tuple[int, int, int]
+TRGBA: TypeAlias = tuple[int, int, int, int]
+
 
 def inline_style_to_dict(inline_style: str) -> dict:
     """Create a dictionary of style properties from an inline style attribute.
@@ -185,6 +191,12 @@ def inline_style_to_dict(inline_style: str) -> dict:
     return style_map
 
 
+def to_inline_style(**kwargs) -> str:  # noqa: ANN003
+    """Create inline style from keyword attributes."""
+    style_map = {key.replace('_', '-'): val for key, val in kwargs.items()}
+    return dict_to_inline_style(style_map)
+
+
 def dict_to_inline_style(style_map: dict) -> str:
     """Create an inline style attribute string.
 
@@ -196,14 +208,14 @@ def dict_to_inline_style(style_map: dict) -> str:
     Returns:
         A string containing inline CSS style properties.
     """
-    style_properties = [
-        name + ':' + str(value) for name, value in style_map.items()
-    ]
+    style_properties = [f'{name}:{value}' for name, value in style_map.items()]
     return ';'.join(style_properties)
 
 
-def csscolor_to_rgb(css_color: str) -> tuple[int, ...] | None:
+def csscolor_to_rgb(css_color: str) -> TRGB | TRGBA:
     """Parse a CSS color property value into an RGB value.
+
+    RGB components are integers in the range 0-255.
 
     Args:
         css_color: A CSS color property string. I.e. "#ffc0ee" or
@@ -216,7 +228,7 @@ def csscolor_to_rgb(css_color: str) -> tuple[int, ...] | None:
         https://developer.mozilla.org/en-US/docs/Web/CSS/color
     """
     # Normalize the property string
-    rgb: tuple[int, ...] | None = None
+    rgb: TRGB | TRGBA | None = None
     css_color = css_color.strip().lower()
     if css_color.startswith('#'):
         rgb = csshex_to_rgb(css_color)
@@ -233,12 +245,14 @@ def csscolor_to_rgb(css_color: str) -> tuple[int, ...] | None:
         # more forgiving...
         if rgb is None and all(c in string.hexdigits for c in css_color):
             rgb = csshex_to_rgb(css_color)
-    if rgb is None or not rgb:
-        rgb = (0, 0, 0)
+
+    if not rgb:
+        return (0, 0, 0)
+
     return rgb
 
 
-def csshex_to_rgb(hex_color: str) -> tuple[int, int, int] | None:
+def csshex_to_rgb(hex_color: str) -> TRGB:
     """Convert a CSS hex color property to RGB.
 
     Args:
@@ -248,7 +262,7 @@ def csshex_to_rgb(hex_color: str) -> tuple[int, int, int] | None:
         The RGB value as a tuple of three integers: (r, g, b).
         Returns (0, 0, 0) by default if the hex value can't be parsed.
     """
-    rgb = None
+    rgb: TRGB | None = None
     hex_color = hex_color.strip().lstrip('#')
     try:
         if len(hex_color) == 6:
@@ -264,12 +278,14 @@ def csshex_to_rgb(hex_color: str) -> tuple[int, int, int] | None:
             rgb = (red * 16 + red, green * 16 + green, blue * 16 + blue)
     except ValueError:
         pass
-    if rgb is None:
-        rgb = (0, 0, 0)
+
+    if not rgb:
+        return (0, 0, 0)
+
     return rgb
 
 
-def cssrgb_to_rgb(rgb_color: str) -> tuple[int, ...]:
+def cssrgb_to_rgb(_rgb_color: str) -> TRGB | TRGBA:
     """Convert a CSS rgb or rgba color property to RGB.
 
     Args:
@@ -280,14 +296,17 @@ def cssrgb_to_rgb(rgb_color: str) -> tuple[int, ...]:
         an optional fourth float value if there is an alpha channel.
         Returns (0, 0, 0) by default if the hex value can't be parsed.
     """
-    rgb: list[int] = []
-    rgb_tokens = rgb_color.strip().strip('rgba() ').split(',')
-    for num in rgb_tokens[:4]:
-        n = parse_channel_value(num)
-        rgb.append(n)
-    if rgb:
-        return tuple(rgb)
-    return (0, 0, 0)
+    raise NotImplementedError
+
+    # This doesn't work. At. All.
+    # rgb: list[int] = []
+    # rgb_tokens = rgb_color.strip().lstrip('rgba(').rstrip(')'.replace(',', ' ')
+    # for num in rgb_tokens[:4]:
+    #    n = parse_channel_value(num)
+    #    rgb.append(n)
+    # if rgb:
+    #    return tuple(rgb)
+    # return (0, 0, 0)
 
 
 def parse_channel_value(value: str) -> int:
@@ -313,8 +332,10 @@ def parse_channel_value(value: str) -> int:
     return max(min(n, 255), 0)
 
 
-def csscolor_to_cssrgb(color: float | str) -> str:
-    """Return a CSS color in the form #rrggbb.
+def csscolor_to_cssrgb(
+    color: float | int | str | Sequence[float] | Sequence[int],  # noqa: PYI041
+) -> str:
+    """Return a color in CSS hex form #rrggbb.
 
     If `color` is a numeric value then it is converted to
     a grayscale number. If the number is a floating point value
@@ -327,14 +348,39 @@ def csscolor_to_cssrgb(color: float | str) -> str:
     Returns:
         A CSS color in the form #rrggbb.
     """
-    rgb: tuple[int, ...] | None = None
-    if isinstance(color, float) and 0.0 <= color < 1.0:
-        gray = int(color * 255)
-        rgb = (gray, gray, gray)
-    elif isinstance(color, int) and color < 256:
-        rgb = (color, color, color)
-    else:
-        rgb = csscolor_to_rgb(str(color))
-    if rgb:
-        return f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+
+    def _rgb2hex(r: int, g: int, b: int) -> str:
+        return f'#{r:02x}{g:02x}{b:02x}'
+
+    if isinstance(color, float):
+        gray = round(min(color, 1) * 255)
+        return _rgb2hex(gray, gray, gray)
+
+    if isinstance(color, int):
+        gray = min(color, 255)
+        return _rgb2hex(gray, gray, gray)
+
+    if isinstance(color, str):
+        return _rgb2hex(*csscolor_to_rgb(color))
+
+    if color and isinstance(color, Sequence):
+        if isinstance(color[0], float):
+            r, g, b = (
+                round(min(typing.cast(float, c), 1) * 255) for c in color[:3]
+            )
+            return _rgb2hex(r, g, b)
+        if isinstance(color[0], int) or max(*color) > 1:
+            # Assume int RGB where 0 <= c <= 255
+            return _rgb2hex(*color[:3])
+
     return '#000000'
+
+
+def rgba_to_cssa(rgba: Sequence[float | int]) -> tuple[str, float]:
+    """Convert RGB[A] values to a CSS hex color and opacity."""
+    color = csscolor_to_cssrgb(rgba)
+    opacity = rgba[3] if len(color) > 3 else 1.0
+    # Assume opacity 100% if == 1
+    if isinstance(opacity, int) and opacity > 1:
+        opacity = min(opacity, 255) / 255
+    return color, opacity
