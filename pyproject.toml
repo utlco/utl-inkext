@@ -15,37 +15,26 @@ classifiers = [
 ]
 dependencies = [
     "lxml",
+    "packaging",
     "typing_extensions",
     "utl-geom2d@https://github.com/utlco/utl-geom2d/archive/refs/heads/main.zip",
 ]
 
 [project.optional-dependencies]
-install = ["packaging"]
-test = [
-    "packaging",
-    "pytest",
-]
+test = ["pytest"]
 dev = [
-    "packaging",
     "pytest",
     "black",
     "ruff",
     "pylint",
     "mypy",
-    "docutils",
-    "sphinx",
-    "sphinx-autobuild",
     "lxml-stubs",
+    "sphinx",
+    "utl-sphinx-theme@https://github.com/utlco/utl-sphinx-theme/archive/refs/heads/main.zip",
 ]
 
 [project.scripts]
 inkstall = "inkext.inkstall:main"
-
-# This Inkscape extension script name must match the name of the INX file
-# (inkscape/inkext-example.inx) and the name of the shell script in
-# the INX file (inkext-example.sh):
-inkext-example = "examples.example:main"
-
 
 [tool.pytest.ini_options]
 minversion="6.0"

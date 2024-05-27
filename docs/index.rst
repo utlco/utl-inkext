@@ -7,6 +7,15 @@ inkext
 * License: LGPL v3
 * Python: 3.9+
 
+.. toctree::
+    :maxdepth: 2
+
+    api
+
+
+Introduction
+------------
+
 Simple python extension biolerplate package for Inkscape 1.2+.
 
 This is basically a rewrite of the original python extension framework that
