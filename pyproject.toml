@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "lxml",
+    "tomli",
     "packaging",
     "typing_extensions",
     "utl-geom2d@https://github.com/utlco/utl-geom2d/archive/refs/heads/main.zip",
