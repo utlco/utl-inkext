@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utl-inkext"
-version = "0.2"
+version = "0.2.1"
 authors = [{name = "Claude Zervas", email = "claude@utlco.com"}]
 description = "Inkscape extension library"
 readme = "README.rst"
@@ -18,7 +18,7 @@ dependencies = [
     "tomli",
     "packaging",
     "typing_extensions",
-    "utl-geom2d@https://github.com/utlco/utl-geom2d/archive/refs/heads/main.zip",
+    "utl-geom2d",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +32,7 @@ dev = [
     "lxml-stubs",
     "sphinx",
     "utl-sphinx-theme@https://github.com/utlco/utl-sphinx-theme/archive/refs/heads/main.zip",
+    "utl-geom2d@https://github.com/utlco/utl-geom2d/archive/refs/heads/main.zip",
 ]
 
 [project.scripts]
