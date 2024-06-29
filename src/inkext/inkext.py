@@ -332,7 +332,7 @@ class InkscapeExtension:
                 path_id, subpath_index, node_index = node_desc.split(':')
                 # TODO: cache path nodes
                 node = self.svg.get_node_by_id(path_id)
-                if node:
+                if node is not None:
                     yield node, int(subpath_index), int(node_index)
 
     def selected_pathnode_points(self) -> Iterator[geom2d.P]:

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TextIO
 
 # from xml.etree import ElementTree as etree
 import geom2d
-from geom2d import TPoint, transform2d
+from geom2d import arc, TPoint, transform2d
 from lxml import etree
 
 from . import css
@@ -325,7 +325,7 @@ class SVGContext:
             precision: The number of digits after the decimal point.
         """
         self._fmt_float = '{}' if precision is None else f'{{:.{precision}f}}'
-        self._fmt_point = f'{self._fmt_float}, {self._fmt_float}'
+        self._fmt_point = f'{self._fmt_float},{self._fmt_float}'
         self._fmt_move = f'M {self._fmt_point}'
         self._fmt_line = f'M {self._fmt_point} L {self._fmt_point}'
         self._fmt_arc = (
@@ -582,6 +582,12 @@ class SVGContext:
         """Return True if the node is an SVG group."""
         return bool(node.tag == svg_ns('g') or node.tag == 'g')
 
+    def remove_node(self, node: TElement) -> None:
+        """Remove node from parent."""
+        parent = node.getparent()
+        if parent is not None:
+            parent.remove(node)
+
     def create_clip_path(self, path: TElement) -> TElement | None:
         """Create an SVG clipPath."""
         defs = self.docroot.find(f'.//{svg_ns("defs")}')
@@ -673,7 +679,7 @@ class SVGContext:
         style: str | None = None,
         parent: TElement | None = None,
     ) -> TElement:
-        """Create an SVG ellipse."""
+        """Create an SVG ellipse using center parameterization."""
         # If phi, start_angle, sweep_angle are all 0 then assume
         # this is a simple <ellipse> element.
         is_ellipse = geom2d.is_zero(start_angle) and geom2d.is_zero(sweep_angle)
@@ -717,6 +723,16 @@ class SVGContext:
         if attrs is None:
             attrs = {}
         attrs['d'] = line_path
+        return self._create_svgelem('path', attrs, style, parent)
+
+    def create_arc(
+        self,
+        arc: arc.Arc,
+        style: str | None = None,
+        parent: TElement | None = None,
+        attrs: dict[str, str] | None = None,
+    ) -> TElement:
+        d = arc.to_svg_path(self.view_scale, add_move=True)
         return self._create_svgelem('path', attrs, style, parent)
 
     def create_circular_arc(
