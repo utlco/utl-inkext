@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TextIO
 
 # from xml.etree import ElementTree as etree
 import geom2d
-from geom2d import arc, TPoint, transform2d
+from geom2d import TPoint, arc, transform2d
 from lxml import etree
 
 from . import css
@@ -390,7 +390,7 @@ class SVGContext:
         """
         if root is None:
             root = self.docroot
-        #matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+        # matrix = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
         matrix: TMatrix | None = None
         parent = node.getparent()
         while parent is not None and parent is not root:
@@ -732,7 +732,10 @@ class SVGContext:
         parent: TElement | None = None,
         attrs: dict[str, str] | None = None,
     ) -> TElement:
-        d = arc.to_svg_path(self.view_scale, add_move=True)
+        """Create an SVG circular arc."""
+        if attrs is None:
+            attrs = {}
+        attrs['d'] = arc.to_svg_path(self.view_scale, add_move=True)
         return self._create_svgelem('path', attrs, style, parent)
 
     def create_circular_arc(

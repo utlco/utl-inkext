@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "utl-inkext"
-version = "0.2.1"
+version = "0.2.2"
 authors = [{name = "Claude Zervas", email = "claude@utlco.com"}]
 description = "Inkscape extension library"
 readme = "README.rst"
@@ -31,8 +31,8 @@ dev = [
     "mypy",
     "lxml-stubs",
     "sphinx",
-    "utl-sphinx-theme@https://github.com/utlco/utl-sphinx-theme/archive/refs/heads/main.zip",
-    "utl-geom2d@https://github.com/utlco/utl-geom2d/archive/refs/heads/main.zip",
+    #"utl-sphinx-theme@https://github.com/utlco/utl-sphinx-theme/archive/refs/heads/main.zip",
+    "utl-sphinx-theme",
 ]
 
 [project.scripts]
@@ -75,6 +75,7 @@ argument-rgx = "^_?[a-z][a-z0-9_]*$"
 method-rgx = "(?x)^(?:(?P<exempt>_[a-z0-9_]+__|(test|assert)_*[A-Z0-9][a-zA-Z0-9_]*|next)|(?P<snake_case>_{0,2}[a-z][a-z0-9_]*))$"
 
 [tool.ruff]
+line-length = 80
 target-version = "py39"
 preview = true
 output-format = "concise"
@@ -86,6 +87,10 @@ extend-exclude = [
     "unused",
     "docs",
 ]
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
 
 [tool.ruff.lint]
 select = [

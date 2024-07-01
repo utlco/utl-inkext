@@ -31,7 +31,7 @@ There are no dependencies on any Inkscape packages so extensions
 can be run from the command line without having Inkscape installed.
 
 The current Inkscape Python package
-`inkex <https://inkscape.gitlab.io/extensions/documentation/>`
+`inkex <https://inkscape.gitlab.io/extensions/documentation/>`_
 is much more complete now and probably should be used
 instead of this for new extensions.
 
@@ -53,10 +53,7 @@ However, this package does include some extras:
 Installation
 ------------
 
-This package is not currently available via PyPi so it will require
-installing from the GitHub repository directly.
-
 .. code::
 
-    pip install https://github.com/utlco/utl-inkext/archive/refs/heads/main.zip
+    pip install utl-inkext
 

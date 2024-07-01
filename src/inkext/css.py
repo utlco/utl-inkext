@@ -285,7 +285,7 @@ def csshex_to_rgb(hex_color: str) -> TRGB:
     return rgb
 
 
-def cssrgb_to_rgb(_rgb_color: str) -> TRGB | TRGBA:
+def cssrgb_to_rgb(rgb_color: str) -> TRGB | TRGBA:
     """Convert a CSS rgb or rgba color property to RGB.
 
     Args:
@@ -299,14 +299,14 @@ def cssrgb_to_rgb(_rgb_color: str) -> TRGB | TRGBA:
     raise NotImplementedError
 
     # This doesn't work. At. All.
-    # rgb: list[int] = []
-    # rgb_tokens = rgb_color.strip().lstrip('rgba(').rstrip(')'.replace(',', ' ')
-    # for num in rgb_tokens[:4]:
-    #    n = parse_channel_value(num)
-    #    rgb.append(n)
-    # if rgb:
-    #    return tuple(rgb)
-    # return (0, 0, 0)
+    rgb: list[int] = []
+    rgb_tokens = rgb_color.strip().lstrip('rgba(').rstrip(')').replace(',', ' ')
+    for num in rgb_tokens[:4]:
+        n = parse_channel_value(num)
+        rgb.append(n)
+    if rgb:
+        return tuple(rgb)
+    return (0, 0, 0)
 
 
 def parse_channel_value(value: str) -> int:

@@ -126,7 +126,11 @@ def degrees(value: str | float) -> float:
 
 
 def percent(value: str | float) -> float:
-    """Argparse type: Convert a percentage specified as 0-100 to a float 0-1.0."""
+    """Argparse type: Convert a percentage specified as 0-100 to a float 0-1.0.
+
+    Args:
+        value: a number in the range 0-100
+    """
     try:
         return float(value) / 100
     except ValueError as e:
