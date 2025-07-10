@@ -8,7 +8,7 @@ version = "0.2.2"
 authors = [{name = "Claude Zervas", email = "claude@utlco.com"}]
 description = "Inkscape extension library"
 readme = "README.rst"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -79,6 +79,7 @@ line-length = 80
 target-version = "py39"
 preview = true
 output-format = "concise"
+respect-gitignore = true
 extend-exclude = [
     "venv",
     "contrib",
@@ -176,7 +177,7 @@ multiline-quotes = "double"
 
 [tool.mypy]
 mypy_path = "./src"
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
