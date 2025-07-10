@@ -14,17 +14,18 @@
 #docutils README.rst > README.html
 #cd docsrc; make html
 
-BLACK="black -q"
+# Replacing black with ruff...
+#BLACK="black -q"
+BLACK="ruff format -q"
+RUFF="ruff check -s"
 MYPY="mypy --no-error-summary"
-RUFF="ruff check -q"
 
 # pylint is very slow, and is largely superseded by ruff
 # which is about 100 times faster.
 # Optionally comment this out to speed things up.
-PYLINT="pylint -E"
+#PYLINT="pylint -E"
 
 TYPOS="typos"
-
 if [[ !"$TYPOS" || !`command -v typos` ]]
 then
   TYPOS=
@@ -38,7 +39,8 @@ UCyan='\033[4;36m'
 for cmd in "$BLACK" "$RUFF" "$MYPY" "$PYLINT" "$TYPOS"; do
   if [ "$cmd" ]
   then
-    printf "${UCyan}${cmd%% *}${Reset}\n"
+    #printf "${UCyan}${cmd%% *}${Reset}\n"
+    printf "${UCyan}${cmd}${Reset}\n"
     $cmd $TARGET
   fi
 done

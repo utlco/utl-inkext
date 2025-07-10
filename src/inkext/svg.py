@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import itertools
 import math
 import random
 import re
@@ -23,12 +23,9 @@ if TYPE_CHECKING:
     from geom2d.transform2d import TMatrix
     from typing_extensions import Self, TypeAlias
 
-# For debugging...
-logger = logging.getLogger(__name__)
-
 # : SVG Namespaces
 SVG_NS = {
-    '': 'http://www.w3.org/2000/svg',
+    #'': 'http://www.w3.org/2000/svg',
     'svg': 'http://www.w3.org/2000/svg',
     'xlink': 'http://www.w3.org/1999/xlink',
     'xml': 'http://www.w3.org/XML/1998/namespace',
@@ -68,6 +65,16 @@ TDocument: TypeAlias = (
 TElement: TypeAlias = (
     etree._Element  # noqa: SLF001 pylint: disable=protected-access
 )
+
+SHAPE_TAGS = {
+    'path',
+    'line',
+    'ellipse',
+    'rect',
+    'circle',
+    'polyline',
+    'polygon',
+}
 
 
 class SVGError(Exception):
@@ -113,12 +120,6 @@ class SVGContext:
     # Number of digits after the decimal point.
     # None means use repr(float)
     _DEFAULT_PRECISION = None
-
-    # Pre-compiled RE for parsing SVG transform attribute value.
-    _TRANSFORM_RE = re.compile(
-        r'(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)\s*,?',
-        re.IGNORECASE,
-    )
 
     document: TDocument
     doc_units: str = 'px'
@@ -368,7 +369,7 @@ class SVGContext:
         parent_transform = self.get_parent_transform(node, root)
         transform_attr = node.get('transform')
         if transform_attr:
-            node_transform = self.parse_transform_attr(transform_attr)
+            node_transform = parse_transform_attr(transform_attr)
             if parent_transform and node_transform:
                 return transform2d.compose_transform(
                     parent_transform, node_transform
@@ -395,8 +396,8 @@ class SVGContext:
         parent = node.getparent()
         while parent is not None and parent is not root:
             parent_transform_attr = parent.get('transform')
-            if parent_transform_attr is not None:
-                parent_matrix = self.parse_transform_attr(parent_transform_attr)
+            if parent_transform_attr:
+                parent_matrix = parse_transform_attr(parent_transform_attr)
                 if parent_matrix and matrix:
                     matrix = transform2d.compose_transform(
                         parent_matrix, matrix
@@ -406,110 +407,53 @@ class SVGContext:
             parent = parent.getparent()
         return matrix
 
-    def node_is_visible(
-        self, node: TElement, check_parent: bool = True, _recurs: bool = False
-    ) -> bool:
-        """Return True if the node is visible.
+    # def node_is_visible(
+    #    self, node: TElement, check_parent: bool = True, _recurs: bool = False
+    # ) -> bool:
+    #    """Return True if the node is visible.
 
-        CSS visibility trumps SVG visibility attribute.
+    #    CSS visibility trumps SVG visibility attribute.
 
-        The node is not considered visible if the `visibility` style
-        is `hidden` or `collapse` or if the `display` style is `none`.
-        If the `visibility` style is `inherit` or `check_parent` is True
-        then the visibility is determined by the parent node.
+    #    The node is not considered visible if the `visibility` style
+    #    is `hidden` or `collapse` or if the `display` style is `none`.
+    #    If the `visibility` style is `inherit` or `check_parent` is True
+    #    then the visibility is determined by the parent node.
 
-        Args:
-            node: An etree.Element node
-            check_parent: Recursively check parent nodes for visibility
+    #    Args:
+    #        node: An etree.Element node
+    #        check_parent: Recursively check parent nodes for visibility
 
-        Returns:
-            True if the node is visible otherwise False.
-        """
-        if node is None:
-            return _recurs
+    #    Returns:
+    #        True if the node is visible otherwise False.
+    #    """
+    #    if node is None:
+    #        return _recurs
 
-        visibility: str | None = None
-        style = node.get('style')
-        if style:
-            styles = css.inline_style_to_dict(style)
-            if styles.get('display') == 'none':
-                return False
-            visibility = styles.get('visibility')
-        if visibility is None:
-            visibility = node.get('visibility')
+    #    visibility: str | None = None
+    #    style = node.get('style')
+    #    if style:
+    #        styles = css.inline_style_to_dict(style)
+    #        if styles.get('display') == 'none':
+    #            return False
+    #        visibility = styles.get('visibility')
+    #    if visibility is None:
+    #        visibility = node.get('visibility')
 
-        if visibility is not None:
-            if visibility == 'inherit' and not check_parent:
-                # Recursively determine parent visibility
-                parent = node.getparent()
-                if parent:
-                    return self.node_is_visible(parent, _recurs=True)
-            if visibility in {'hidden', 'collapse'}:
-                return False
+    #    if visibility is not None:
+    #        if visibility == 'inherit' and not check_parent:
+    #            # Recursively determine parent visibility
+    #            parent = node.getparent()
+    #            if parent:
+    #                return self.node_is_visible(parent, _recurs=True)
+    #        if visibility in {'hidden', 'collapse'}:
+    #            return False
 
-        if check_parent:
-            parent = node.getparent()
-            if parent is not None:
-                return self.node_is_visible(parent, _recurs=True)
+    #    if check_parent:
+    #        parent = node.getparent()
+    #        if parent is not None:
+    #            return self.node_is_visible(parent, _recurs=True)
 
-        return True
-
-    def parse_transform_attr(self, stransform: str | None) -> TMatrix | None:
-        """Parse an SVG transform attribute.
-
-        Args:
-            stransform: A string containing the SVG transform list.
-
-        Returns:
-            A single affine transform matrix or None.
-        """
-        if not stransform:
-            return None
-        if stransform:
-            stransform = stransform.strip()
-        transforms = self._TRANSFORM_RE.findall(stransform)
-        matrices = []
-        for transform, args in transforms:
-            matrix = None
-            values = [float(n) for n in args.replace(',', ' ').split()]
-            num_values = len(values)
-            if transform == 'translate':
-                x = values[0]
-                y = values[1] if num_values > 1 else 0.0
-                matrix = transform2d.matrix_translate(x, y)
-            if transform == 'scale':
-                x = values[0]
-                y = values[1] if num_values > 1 else x
-                matrix = transform2d.matrix_scale(x, y)
-            if transform == 'rotate':
-                a = math.radians(values[0])
-                cx = values[1] if num_values > 1 else 0.0
-                cy = values[2] if num_values > 2 else 0.0
-                matrix = transform2d.matrix_rotate(a, (cx, cy))
-            if transform == 'skewX':
-                a = math.radians(values[0])
-                matrix = transform2d.matrix_skew_x(a)
-            if transform == 'skewY':
-                a = math.radians(values[0])
-                matrix = transform2d.matrix_skew_y(a)
-            if transform == 'matrix':
-                matrix = (
-                    (values[0], values[2], values[4]),
-                    (values[1], values[3], values[5]),
-                )
-            if matrix is not None:
-                matrices.append(matrix)
-
-        if matrices:
-            # Compose all the transforms into one matrix
-            result_matrix = matrices[0]
-            for matrix in matrices[1:]:
-                result_matrix = transform2d.compose_transform(
-                    result_matrix, matrix
-                )
-            return result_matrix
-
-        return None
+    #    return True
 
     def scale_inline_style(self, inline_style: str) -> str:
         """Rescale inline style quantities to user units.
@@ -693,7 +637,7 @@ class SVGContext:
             }
             if not geom2d.is_zero(phi):
                 m = transform2d.matrix_rotate(phi, origin=center)
-                attrs['transform'] = transform_attr(m)
+                attrs['transform'] = create_matrix_transform(m)
             return self._create_svgelem(
                 'ellipse', attrs, style=style, parent=parent
             )
@@ -843,12 +787,10 @@ class SVGContext:
             ),
             'L',
         ]
-        d.extend(
-            [
-                self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
-                for p in vertices[1:]
-            ]
-        )
+        d.extend([
+            self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
+            for p in vertices[1:]
+        ])
         # for p in vertices[1:]:
         #    d.append(
         #        self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
@@ -904,12 +846,10 @@ class SVGContext:
                 ),
                 'L',
             ]
-            d.extend(
-                [
-                    self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
-                    for p in vertices[1:]
-                ]
-            )
+            d.extend([
+                self._fmt_point.format(self._scale(p[0]), self._scale(p[1]))
+                for p in vertices[1:]
+            ])
             if geom2d.P(vertices[0]) != vertices[-1]:
                 if close_polygon:
                     if close_path:
@@ -974,14 +914,12 @@ class SVGContext:
                 # Assume this is a line segment with two endpoints:
                 # ((x1, y1), (x2, y2))
                 p2 = segment[1]
-                d.extend(
-                    (
-                        'L',
-                        self._fmt_point.format(
-                            self._scale(p2[0]), self._scale(p2[1])
-                        ),
-                    )
-                )
+                d.extend((
+                    'L',
+                    self._fmt_point.format(
+                        self._scale(p2[0]), self._scale(p2[1])
+                    ),
+                ))
             elif isinstance(segment, geom2d.CubicBezier) or len(segment) == 4:
                 # Assume this is a cubic Bezier:
                 # ((x1, y1), (cx1, cx1), (cx2, cx2), (x2, y2))
@@ -1158,7 +1096,7 @@ def geompath_to_svgpath(
     ],
     scale: float = 1,
     close_path: bool = False,
-) -> str | None:
+) -> str:
     """Create an SVG path from a sequence of geometry segments.
 
     Args:
@@ -1171,9 +1109,6 @@ def geompath_to_svgpath(
     Returns:
         An SVG path attribute value (the 'd' part).
     """
-    if not path:
-        return None
-
     it = iter(path)
     try:
         first_segment = next(it)
@@ -1217,7 +1152,7 @@ def path_tokenizer(path_data: str) -> Iterator[tuple[str, bool]]:
     is a command and False if the token is a numeric parameter.
 
     Args:
-        path_data: The 'd' attribute of an SVG path.
+        path_data: The ``d`` attribute of an SVG path.
 
     Yields:
         A 2-tuple with token and token type hint.
@@ -1422,14 +1357,27 @@ def parse_path(path_data: str) -> Iterator[tuple]:  # noqa: PLR0912 PLR0915
 # pylint: enable=too-many-statements
 
 
+def stringify_parsed_path(parsed_path: Iterable[tuple]) -> str:
+    """Convert a parsed path to a string.
+
+    This creates the ``d`` attribute value for a path element
+    given a list of path commands and parameters as returned
+    by :py:func:`parse_path`.
+    """
+    return ' '.join([
+        f'{cmd} {" ".join([str(p) for p in params])}'
+        for cmd, params in parsed_path
+    ])
+
+
 def explode_path(path_data: str) -> list:
     """Break the path at node points into component segments.
 
     Args:
-        path_data: The 'd' attribute value of a SVG path element.
+        path_data: The ``d`` attribute value of a SVG path element.
 
     Returns:
-        A list of path 'd' attribute values.
+        A list of path ``d`` attribute values.
     """
     dlist = []
     p1 = None
@@ -1446,6 +1394,52 @@ def explode_path(path_data: str) -> list:
     return dlist
 
 
+def reverse_path(path_data: str) -> str:
+    """Reverse nodes in a path.
+    Args:
+        path_data: The ``d`` attribute value of a SVG path element.
+
+    Returns:
+        The ``d`` attribute value, with nodes reversed.
+    """
+    subpaths = []
+    subpath: list[tuple] = []
+    p1 = None
+    # Split subpaths
+    for cmd, params in parse_path(path_data):
+        if cmd == 'M':
+            if subpath:
+                subpaths.append(subpath)
+            subpath = [(cmd, params)]
+            continue
+        if subpath:
+            subpath.append((cmd, params))
+
+    subpaths.append(subpath)
+
+    subpaths.reverse()
+
+    reversed_path = []
+    for subpath in subpaths:
+        if len(subpath) < 2:
+            continue  # Ignore pathological/empty subpaths
+        subpath.reverse()
+        cmd, params = subpath[0]
+        reversed_path.append(('M', params[-2:]))
+        for (cmd1, params1), (cmd2, params2) in itertools.pairwise(subpath):
+            params1[-2:] = params2[-2:]
+            if cmd1 == 'A':
+                # Reverse arc sweep direction
+                sweep_flag = params1[4]
+                params1[4] = int(not sweep_flag)
+            elif cmd1 == 'C':
+                # Reverse Cubic Bezier control points
+                params1[:4] = params1[2], params1[3], params1[0], params1[1]
+            reversed_path.append((cmd1, params1))
+
+    return stringify_parsed_path(reversed_path)
+
+
 def create_svg_document(
     width: str | float,
     height: str | float,
@@ -1455,7 +1449,7 @@ def create_svg_document(
 ) -> TDocument:
     """Create a minimal SVG document tree.
 
-    The svg element `viewbox` attribute will maintain the size and
+    The svg element ``viewbox`` attribute will maintain the size and
     attribute ratio as specified by width and height.
 
     Args:
@@ -1468,7 +1462,7 @@ def create_svg_document(
         nsmap: Namespace mapping.
 
     Returns:
-        An lxml.etree.ElementTree
+        A node of type ``lxml.etree.ElementTree``
     """
     if nsmap is None:
         nsmap = SVG_NS
@@ -1513,10 +1507,10 @@ def random_id(prefix: str = '_svg', rootnode: TElement | None = None) -> str:
         A random id string that has a fairly low chance of collision
         with previously generated ids.
     """
-    id_attr = f'{prefix}{random.randint(1, 2 ** 31):d}'
+    id_attr = f'{prefix}{random.randint(1, 2**31):d}'
     if rootnode is not None:
         while get_node_by_id(rootnode, id_attr) is not None:
-            id_attr = f'{prefix}{random.randint(1, 2 ** 31):d}'
+            id_attr = f'{prefix}{random.randint(1, 2**31):d}'
     return id_attr
 
 
@@ -1538,13 +1532,98 @@ def get_node_by_tag(root: TElement, tag: str) -> TElement | None:
     return root.find(f'.//{tag}')
 
 
-def transform_attr(matrix: TMatrix) -> str:
+# Pre-compiled RE for parsing SVG transform attribute value.
+_TRANSFORM_RE = re.compile(
+    r'(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)\s*,?',
+    re.IGNORECASE,
+)
+
+
+def parse_transform_attr(stransform: str | None) -> TMatrix | None:
+    """Parse an SVG transform attribute.
+
+    Args:
+        stransform: A string containing the SVG transform list.
+
+    Returns:
+        A single affine transform matrix or None.
+    """
+    if not stransform:
+        return None
+    transforms = _TRANSFORM_RE.findall(stransform.strip())
+    matrices = []
+    for transform, args in transforms:
+        matrix = None
+        values = [float(n) for n in args.replace(',', ' ').split()]
+        num_values = len(values)
+        if transform == 'translate':
+            x = values[0]
+            y = values[1] if num_values > 1 else 0.0
+            matrix = transform2d.matrix_translate(x, y)
+        if transform == 'scale':
+            x = values[0]
+            y = values[1] if num_values > 1 else x
+            matrix = transform2d.matrix_scale(x, y)
+        if transform == 'rotate':
+            a = math.radians(values[0])
+            cx = values[1] if num_values > 1 else 0.0
+            cy = values[2] if num_values > 2 else 0.0
+            matrix = transform2d.matrix_rotate(a, (cx, cy))
+        if transform == 'skewX':
+            a = math.radians(values[0])
+            matrix = transform2d.matrix_skew_x(a)
+        if transform == 'skewY':
+            a = math.radians(values[0])
+            matrix = transform2d.matrix_skew_y(a)
+        if transform == 'matrix':
+            matrix = (
+                (values[0], values[2], values[4]),
+                (values[1], values[3], values[5]),
+            )
+        if matrix is not None:
+            matrices.append(matrix)
+
+    if matrices:
+        # Compose all the transforms into one matrix
+        result_matrix = matrices[0]
+        for matrix in matrices[1:]:
+            result_matrix = transform2d.compose_transform(result_matrix, matrix)
+        return result_matrix
+
+    return None
+
+
+def create_matrix_transform(matrix: TMatrix) -> str:
     """Create a SVG transform attribute value from matrix."""
     return (
         f'matrix({matrix[0][0]:f},{matrix[1][0]:f},'
         f'{matrix[0][1]:f},{matrix[1][1]:f},'
         f'{matrix[0][2]:f},{matrix[1][2]:f})'
     )
+
+
+def get_transform_matrix(node: TElement) -> TMatrix | None:
+    """Get the transform matrix for an SVG node."""
+    transform_attr = node.get('transform')
+    if transform_attr:
+        return parse_transform_attr(transform_attr)
+    return None
+
+
+def set_transform(node: TElement, matrix: TMatrix) -> None:
+    """Assign a transform matrix to the node.
+
+    This replaces any existing transforms.
+    """
+    node.set('transform', create_matrix_transform(matrix))
+
+
+def add_transform(node: TElement, matrix: TMatrix) -> None:
+    """Add a transfrom to the node."""
+    current_matrix = get_transform_matrix(node)
+    if current_matrix:
+        matrix = transform2d.compose_transform(current_matrix, matrix)
+    node.set('transform', create_matrix_transform(matrix))
 
 
 def scalar_unit(scalar: str | None, default: str = 'px') -> str:
@@ -1599,3 +1678,79 @@ def unit_convert(
         value = scalar_value(value)
 
     return value * (UNIT_CONV.get(from_unit, 1) / UNIT_CONV.get(to_unit, 1))
+
+
+def get_shape_elements(
+    root: TElement | Iterable[TElement], visible_only: bool = True
+) -> Iterator[TElement]:
+    """Get all visible shape elements descended from one or more root elements.
+
+    Basically just flattens the element tree by recursively
+    descending the document/layer tree.
+    """
+    if (
+        isinstance(root, TElement)
+        and strip_ns(root.tag) in SHAPE_TAGS
+        and (not visible_only or node_is_visible(root))
+    ):
+        yield root
+    else:
+        for node in root:
+            if not visible_only or node_is_visible(node):
+                if len(node):
+                    yield from get_shape_elements(node)
+                elif strip_ns(node.tag) in SHAPE_TAGS:
+                    yield node
+
+
+#def get_start_point(e: TElement) -> geom2d.P:
+#    """Get the first point in the path element."""
+
+
+def node_is_visible(
+    node: TElement, check_parent: bool = True, _recurs: bool = False
+) -> bool:
+    """Return True if the node is visible.
+
+    CSS visibility trumps SVG visibility attribute.
+
+    The node is not considered visible if the `visibility` style
+    is `hidden` or `collapse` or if the `display` style is `none`.
+    If the `visibility` style is `inherit` or `check_parent` is True
+    then the visibility is determined by the parent node.
+
+    Args:
+        node: An etree.Element node
+        check_parent: Recursively check parent nodes for visibility
+
+    Returns:
+        True if the node is visible otherwise False.
+    """
+    if node is None:
+        return _recurs
+
+    visibility: str | None = None
+    style = node.get('style')
+    if style:
+        styles = css.inline_style_to_dict(style)
+        if styles.get('display') == 'none':
+            return False
+        visibility = styles.get('visibility')
+    if visibility is None:
+        visibility = node.get('visibility')
+
+    if visibility is not None:
+        if visibility == 'inherit' and not check_parent:
+            # Recursively determine parent visibility
+            parent = node.getparent()
+            if parent:
+                return node_is_visible(parent, _recurs=True)
+        if visibility in {'hidden', 'collapse'}:
+            return False
+
+    if check_parent:
+        parent = node.getparent()
+        if parent is not None:
+            return node_is_visible(parent, _recurs=True)
+
+    return True

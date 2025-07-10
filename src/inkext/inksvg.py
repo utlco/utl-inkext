@@ -65,6 +65,7 @@ class InkscapeSVGContext(svg.SVGContext):
     _DEFAULT_DOC_UNITS = 'px'
 
     doc_name: str
+    selected_layer_name: str | None = None
 
     # Inkscape ruler units.
     # These should be same as SVG doc units, but for whatever reason
@@ -96,6 +97,7 @@ class InkscapeSVGContext(svg.SVGContext):
                 layer = self.get_node_by_id(layer_id)
                 if layer is not None:
                     self.current_parent = layer
+                    self.selected_layer_name = self.get_layer_name(layer)
 
         # Document clipping rectangle
         self.cliprect = geom2d.Box((0, 0), self.get_document_size())
@@ -296,7 +298,7 @@ class InkscapeSVGContext(svg.SVGContext):
         return [
             node
             for node in self.docroot
-            if self.is_layer(node) and self.node_is_visible(node)
+            if self.is_layer(node) and svg.node_is_visible(node)
         ]
 
     def get_layer_elements(self, layer: TElement) -> list[TElement]:
@@ -310,11 +312,11 @@ class InkscapeSVGContext(svg.SVGContext):
         Returns:
             A (possibly empty) list of visible elements.
         """
-        if self.node_is_visible(layer):
+        if svg.node_is_visible(layer):
             return [
                 node
                 for node in layer
-                if self.node_is_visible(node, check_parent=False)
+                if svg.node_is_visible(node, check_parent=False)
             ]
         return []
 
@@ -324,6 +326,72 @@ class InkscapeSVGContext(svg.SVGContext):
             layer_name = self.get_layer_name(node)
             return bool(layer_name is not None and layer_name)
         return False
+
+    def get_shape_elements_layers(
+        self,
+        elements: Iterable[TElement] | None = None,
+        shapetags: Iterable[str] = _DEFAULT_SHAPES,
+        parent_transform: tuple | None = None,
+        skip_layers: list[str] | None = None,
+        accumulate_transform: bool = True,
+    ) -> list[list[tuple[TElement, geom2d.TMatrix | None]]]:
+        """Get all shape elements in an element tree.
+
+        Separate top-level layers into an array of layer sub-elements.
+
+        Traverse a tree of SVG nodes and flatten it to a list of
+        tuples containing an SVG shape element and its accumulated transform.
+
+        This does a depth-first traversal of <g> and <use> elements.
+
+        Hidden elements are ignored.
+
+        Args:
+            elements: An iterable collection of element nodes.
+                This will be all top level elements (docroot) by default.
+            shapetags: List of shape element tags that can be fetched.
+                Default is ('path', 'rect', 'line', 'circle',
+                'ellipse', 'polyline', 'polygon').
+                Anything else is ignored.
+            parent_transform: Transform matrix to add to each node's transforms.
+                If None the node's parent transform (if any) is used.
+            skip_layers: A list of layer names (as regexes) to ignore
+            accumulate_transform: Apply parent transform(s) to element node
+                if True. Default is True.
+
+        Returns:
+            A possibly empty list of 2-tuples consisting of
+            SVG element and accumulated transform.
+        """
+        if elements is None:
+            elements = self.docroot.iterchildren()
+
+        layers = []
+        for node in elements:
+            if self.is_layer(node):
+                layer_name = self.get_layer_name(node)
+                layers.append(
+                    self._get_shape_nodes_recurs(
+                        node,
+                        shapetags,
+                        parent_transform,
+                        True,
+                        skip_layers,
+                        accumulate_transform,
+                    )
+                )
+            else:
+                layers.append(
+                    self._get_shape_nodes_recurs(
+                        node,
+                        shapetags,
+                        parent_transform,
+                        True,
+                        skip_layers,
+                        accumulate_transform,
+                    )
+                )
+        return layers
 
     def get_shape_elements(
         self,
@@ -386,11 +454,11 @@ class InkscapeSVGContext(svg.SVGContext):
         accumulate_transform: bool,
     ) -> list[tuple[TElement, geom2d.TMatrix | None]]:
         """Recursively get all shape elements in an element tree."""
-        if not self.node_is_visible(node, check_parent=check_parent):
+        if not svg.node_is_visible(node, check_parent=check_parent):
             return []
 
         # first apply the current transform matrix to this node's transform
-        node_transform = self.parse_transform_attr(node.get('transform'))
+        node_transform = svg.parse_transform_attr(node.get('transform'))
         if accumulate_transform:
             if parent_transform is None:
                 parent_transform = self.get_parent_transform(node)
@@ -430,7 +498,7 @@ class InkscapeSVGContext(svg.SVGContext):
                 # [1:] to ignore leading '#' in reference
                 refnode = self.get_node_by_id(refid[1:])
                 # TODO: Can the referred node not be visible?
-                if refnode is not None:  # and self.node_is_visible(refnode):
+                if refnode is not None:  # and svg.node_is_visible(refnode):
                     # Apply explicit x,y translation transform
                     x = float(node.get('x', '0'))
                     y = float(node.get('y', '0'))

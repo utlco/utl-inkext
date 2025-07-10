@@ -1,4 +1,5 @@
 """Test SVG parsing and arc/ellipse calculations."""
+
 from __future__ import annotations
 
 import itertools
@@ -100,8 +101,9 @@ l 1.040625,-1.040625
 ARC_5 = geom2d.arc.Arc(
     (2.96989410, 4.80045950),
     (3.41312330, 4.35723030),
-    0.31341037, -3.14159265,
-    (3.19150870, 4.57884490)
+    0.31341037,
+    -3.14159265,
+    (3.19150870, 4.57884490),
 )
 
 SUBPATH1 = """
@@ -115,6 +117,29 @@ m -3.033287,-0.5806776
 a 1.7518641,0.74394315 9.41528 0 1 0.703789,-0.808342
   1.7518641,0.74394315 9.41528 0 1 2.1786133,0.417063
   1.7518641,0.74394315 9.41528 0 1 0.1508849,0.9719566
+"""
+
+SUBPATH2 = """
+M -6.5119484,4.1542968
+A 1.5655915,0.67857802 0 0 1 -7.7395344,4.7252119
+  1.5655915,0.67857802 0 0 1 -9.3946323,4.4179264
+  1.5655915,0.67857802 0 0 1 -9.28809,3.6388783
+  1.5655915,0.67857802 0 0 1 -7.560828,3.418493
+Z
+m -3.033287,-0.5806776
+a 1.7518641,0.74394315 9.41528 0 1 0.703789,-0.808342
+  1.7518641,0.74394315 9.41528 0 1 2.1786133,0.417063
+  1.7518641,0.74394315 9.41528 0 1 0.1508849,0.9719566
+"""
+
+PATH5 = """
+m 11.263872,13.21176 0.06881,-0.709285
+c 0.187908,-0.272598 0.558429,0 0.558429,0
+l 0.0079,0.569016
+
+m 1.820889,-0.561075 -0.900748,0.06316
+a 1,1 0 0 1 -0.396534,0.332732
+l 0.169837,0.686556 -0.44992,0.174675
 """
 
 S = """
@@ -132,6 +157,7 @@ S = """
      d="M 8.9009556,5.1717621 A 0.63392878,1.5572873 0 0 1 8.4232386,6.6838506 0.63392878,1.5572873 0 0 1 7.7095373,5.9159212 0.63392878,1.5572873 0 0 1 7.8380254,4.0280688 0.63392878,1.5572873 0 0 1 8.6145987,3.8722331 L 8.2670279,5.1745839 Z"
      transform="matrix(0.6920136,0.72188446,-0.7961769,0.60506392,0,0)" />
 """
+
 
 def test_parse_poly() -> None:
     """Test parsing a polyline and its reverse."""
@@ -212,6 +238,15 @@ def test_parse_arc() -> None:
     for seg1, seg2 in zip(path, path2):
         assert seg1 == seg2
 
+    print('SUBPATH2')
+    print(list(svg.parse_path(SUBPATH2)))
+    path = geomsvg.parse_path_geom(SUBPATH2)[0]
+    # Test round trip.
+    svgpath = svg.geompath_to_svgpath(path)
+    path3 = geomsvg.parse_path_geom(svgpath, ellipse_to_bezier=False)[0]
+    for seg1, seg2 in zip(path2, path3):
+        assert seg1 == seg2
+
 
 def test_parse_file_arc() -> None:
     """Test parsing an Inkscape SVG document containing paths with arcs."""
@@ -227,6 +262,12 @@ def test_parse_file_arc() -> None:
 
     path_list = geomsvg.svg_to_geometry(svg_elements, flip_transform)
     assert path_list
+
+
+def test_reverse_path() -> None:
+    pp1 = svg.stringify_parsed_path((svg.parse_path(PATH5)))
+    pp2 = svg.reverse_path(svg.reverse_path(PATH5))
+    assert pp1 == pp2
 
 
 def _prcmp(path1, path2) -> None:

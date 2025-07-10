@@ -57,55 +57,22 @@ def path_to_polypath(path: Iterable[TPathGeom]) -> Iterator[geom2d.Line]:
 
 
 def path_to_polyline(path: Iterable[TPathGeom]) -> Iterator[geom2d.P]:
-    """Convert a path to a polypath (sequence of Lines).
+    """Convert a path to a polyline (sequence of points).
 
-    Arc and CubicBezier segments are converted to simple
-    Line segments using the end points.
+    Only the endpoints of Arc and CubicBezier segments are used.
 
     Args:
         path: An iterable of path segments.
 
     Returns:
-        A polypath as an iterable of Line segments.
+        A polypath as an iterable of points (``geom2d.P``).
     """
-    segment: TPathGeom
     for segment in path:
         yield segment.p1
     yield segment.p2
 
 
 def svg_to_geometry(
-    svg_elements: Iterable[tuple[TElement, TMatrix | None]],
-    parent_transform: TMatrix | None = None,
-) -> list[Sequence[TPathGeom]]:
-    """Convert the SVG shape elements to geometry objects.
-
-    Converts SVG shape elements to Line, Arc, and/or CubicBezier segments,
-    and applies node/parent transforms.
-    The coordinates of the segments will be absolute with
-    respect to the parent container.
-
-    Args:
-        svg_elements: An iterable collection of 2-tuples consisting of
-            SVG Element node and transform matrix.
-        parent_transform: An optional parent transform to apply to all
-            nodes. Default is None.
-
-    Returns:
-        A list of paths, where a path is a list of one or more
-        segments made of Line, Arc, or CubicBezier objects.
-    """
-    return svg_to_geometry_el(  # type: ignore [return-value]
-        svg_elements,
-        parent_transform=parent_transform,
-        ellipse_to_bezier=True,
-    )
-    # return typing.cast(
-    #    list[Sequence[geom2d.Line | geom2d.Arc | geom2d.CubicBezier]], paths
-    # )
-
-
-def svg_to_geometry_el(
     svg_elements: Iterable[tuple[TElement, TMatrix | None]],
     parent_transform: TMatrix | None = None,
     ellipse_to_bezier: bool = True,
@@ -127,7 +94,9 @@ def svg_to_geometry_el(
 
     Returns:
         A list of paths, where a path is a list of one or more
-        segments made of Line, Arc, or CubicBezier objects.
+        segments made of
+        Line, Arc, or CubicBezier objects, and optionally
+        EllipticalArc, Ellipse if ellipse_to_bezier is False.
     """
     path_list: list[Sequence[TGeom]] = []
     for element, element_transform in svg_elements:
@@ -196,9 +165,9 @@ def svg_element_to_geometry(  # noqa: PLR0912
         elif tag == 'circle':
             subpath = convert_circle(element)
         elif tag == 'polyline':
-            subpath = convert_polyline(element)
+            subpath = convert_poly(element)
         elif tag == 'polygon':
-            subpath = convert_polygon(element)
+            subpath = convert_poly(element, close=True)
         else:
             raise TypeError('Unrecognized SVG element.')
         if subpath:
@@ -404,12 +373,13 @@ def convert_ellipse(element: TElement) -> geom2d.Ellipse:
     return geom2d.ellipse.Ellipse((cx, cy), rx, ry)
 
 
-def convert_polyline(element: TElement) -> list[geom2d.Line]:
-    """Convert an SVG `polyline` shape element to a list of line segments.
+def convert_poly(element: TElement, close: bool = False) -> list[geom2d.Line]:
+    """Convert SVG `polyline` or `polygon` element to list of line segments.
 
     Args:
         element: An SVG 'polyline' element of the form:
             <polyline points='x1,y1 x2,y2 x3,y3 [...]'/>
+        close: If True, close polygon if not already closed. Default is False.
 
     Returns:
        A list of geom2d.Line segments.
@@ -424,22 +394,7 @@ def convert_polyline(element: TElement) -> list[geom2d.Line]:
         p = geom2d.P(float(sx), float(sy))
         segments.append(geom2d.Line(prev_p, p))
         prev_p = p
-    return segments
-
-
-def convert_polygon(element: TElement) -> list[geom2d.Line]:
-    """Convert an SVG `polygon` shape element to a list line segments.
-
-    Args:
-        element: An SVG 'polygon' element of the form:
-            <polygon points='x1,y1 x2,y2 x3,y3 [...]'/>
-
-    Returns:
-       A list of geom2d.Line segments. The polygon will be closed.
-    """
-    segments = convert_polyline(element)
-    # Close the polygon if not already so
-    if len(segments) > 1 and segments[-1] != segments[0]:
+    if close and len(segments) > 1 and segments[-1] != segments[0]:
         segments.append(geom2d.Line(segments[-1].p2, segments[0].p1))
     return segments
 

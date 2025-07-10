@@ -3,6 +3,7 @@
 
 This pretty much only works on Linux or maybe MacOS.
 """
+
 from __future__ import annotations
 
 import argparse

@@ -29,6 +29,11 @@ if TYPE_CHECKING:
 _ = gettext.gettext
 logger = logging.getLogger(__name__)
 
+DEBUG = bool(
+    os.environ.get('UTL_DEBUG', '').lower() in {'t', 'true', 'y', 'yes'}
+)
+"""True if debug layer or debug logging is enabled."""
+
 
 _RE_HEX_COLOR = re.compile(r'(#|0x)?([0-9a-fA-F]+)')
 
@@ -211,7 +216,6 @@ class InkscapeExtension:
             flip_debug_layer: Flip the Y axis of the debug layer.
                 This is useful if the GUI coordinate origin is at
                 the bottom left. Default is False.
-            debug_layer_name: Name of the debug layer.
         """
         # This just calls run() to be compatible with the new Inkex test harness
         self.run(flip_debug_layer=flip_debug_layer)
@@ -240,6 +244,14 @@ class InkscapeExtension:
         if self.options.log_create:
             self._create_log(self.options.log_filename, self.options.log_level)
             logger.info('Invocation: %s', ' '.join(argv or sys.argv))
+
+        if (
+            logger.getEffectiveLevel() == logging.DEBUG
+            or self.options.create_debug_layer
+        ):
+            os.environ['UTL_DEBUG'] = 'true'
+            global DEBUG
+            DEBUG = True
 
         # The option to create a new document supersedes the
         # input file option.
