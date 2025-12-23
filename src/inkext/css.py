@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import re
 import string
 import typing
 from collections.abc import Sequence
+from typing import TypeAlias
 
-from typing_extensions import TypeAlias
+EPSILON = 1e-9
 
 # CSS color names to hex rgb values.
 # See: https://www.w3.org/TR/css3-color/#svg-color
@@ -163,11 +165,21 @@ _CSS_COLORS = {
     'yellowgreen': (154, 205, 50),
 }
 
+TRGB: TypeAlias = tuple[int, int, int]
+TRGBA: TypeAlias = tuple[int, int, int, int]
+
+
 # SVG whitespace
 _SVG_WS = ' \t\r\n\f'
 
-TRGB: TypeAlias = tuple[int, int, int]
-TRGBA: TypeAlias = tuple[int, int, int, int]
+_CSSHEX_RGBA_LEN = 8
+_CSSHEX_RGB_LEN = 6
+_CSSHEX_RGBSHORT_LEN = 3
+
+_RE_CSSHEX = re.compile(
+    r'#(([0-9a-f]{6})([0-9a-f]{2})?|[0-9a-f]{3})$',
+    flags=(re.IGNORECASE | re.ASCII),
+)
 
 
 def inline_style_to_dict(inline_style: str) -> dict:
@@ -252,37 +264,42 @@ def csscolor_to_rgb(css_color: str) -> TRGB | TRGBA:
     return rgb
 
 
-def csshex_to_rgb(hex_color: str) -> TRGB:
-    """Convert a CSS hex color property to RGB.
+def csshex_to_rgb(hex_color: str) -> TRGB | TRGBA:
+    """Convert a CSS hex color property to RGB/RGBA.
 
     Args:
         hex_color: A CSS hex property string.
 
     Returns:
-        The RGB value as a tuple of three integers: (r, g, b).
+        The RGBA value as a tuple of four integers (r, g, b, a)
+        in the range 0-255 if opacity is specified (8 char hex value)
+        otherwise a three-tuple (r, g, b).
         Returns (0, 0, 0) by default if the hex value can't be parsed.
     """
-    rgb: TRGB | None = None
     hex_color = hex_color.strip().lstrip('#')
     try:
-        if len(hex_color) == 6:
-            rgb = (
+        if len(hex_color) == _CSSHEX_RGB_LEN:
+            return (
                 int(hex_color[0:2], 16),
                 int(hex_color[2:4], 16),
                 int(hex_color[4:], 16),
             )
-        elif len(hex_color) == 3:
+        if len(hex_color) == _CSSHEX_RGBSHORT_LEN:
             red = int(hex_color[0], 16)
             green = int(hex_color[1], 16)
             blue = int(hex_color[2], 16)
-            rgb = (red * 16 + red, green * 16 + green, blue * 16 + blue)
+            return (red * 16 + red, green * 16 + green, blue * 16 + blue)
+        if len(hex_color) == _CSSHEX_RGBA_LEN:
+            return (
+                int(hex_color[0:2], 16),
+                int(hex_color[2:4], 16),
+                int(hex_color[4:6], 16),
+                int(hex_color[6:], 16),
+            )
     except ValueError:
         pass
 
-    if not rgb:
-        return (0, 0, 0)
-
-    return rgb
+    return (0, 0, 0)
 
 
 def cssrgb_to_rgb(rgb_color: str) -> TRGB | TRGBA:
@@ -332,7 +349,7 @@ def parse_channel_value(value: str) -> int:
     return max(min(n, 255), 0)
 
 
-def csscolor_to_cssrgb(
+def csscolor_to_hexrgb(
     color: float | int | str | Sequence[float] | Sequence[int],  # noqa: PYI041
 ) -> str:
     """Return a color in CSS hex form #rrggbb.
@@ -346,41 +363,150 @@ def csscolor_to_cssrgb(
         color: A possibly malformed CSS color string or number.
 
     Returns:
-        A CSS color in the form #rrggbb.
+        A CSS hex color in the form #rrggbb.
     """
 
     def _rgb2hex(r: int, g: int, b: int) -> str:
-        return f'#{r:02x}{g:02x}{b:02x}'
+        # rgb components are integers in the range 0-255
+        return f'#{int(r):02x}{int(g):02x}{int(b):02x}'
 
     if isinstance(color, float):
-        gray = round(min(color, 1) * 255)
+        gray = round(max(min(color, 1), 0) * 255)
         return _rgb2hex(gray, gray, gray)
 
     if isinstance(color, int):
-        gray = min(color, 255)
+        gray = max(min(color, 255), 0)
         return _rgb2hex(gray, gray, gray)
 
     if isinstance(color, str):
+        if m := _RE_CSSHEX.match(color):
+            # Just assume it's already a CSS hex color
+            return m[0][:7]
         return _rgb2hex(*csscolor_to_rgb(color))
 
-    if color and isinstance(color, Sequence):
-        if isinstance(color[0], float):
+    if isinstance(color, Sequence) and len(color) >= 3:
+        # FIXME: this can be a problem for (1, 1, 1) and (0, 0, 0)
+        # if are all ints but it's supposed to be float white or black.
+        if is_frgba(color):
             r, g, b = (
-                round(min(typing.cast(float, c), 1) * 255) for c in color[:3]
+                round(min(typing.cast('float', c), 1) * 255) for c in color[:3]
             )
             return _rgb2hex(r, g, b)
-        if isinstance(color[0], int) or max(*color) > 1:
+        if is_irgba(color):
             # Assume int RGB where 0 <= c <= 255
             return _rgb2hex(*color[:3])
 
     return '#000000'
 
 
+def color_to_frgba(
+    color: float | str | Sequence[float] | Sequence[int],
+) -> tuple[float, float, float, float]:
+    """Convert a color to RGBA float form.
+
+    All values will be in the range 0.0 - 1.0.
+
+    If `color` is a single numeric value then it is converted to
+    a grayscale RGBA.
+
+    Args:
+        color: A possibly malformed CSS color string or number.
+
+    Returns:
+        A RGBAColor color in the form #rrggbb.
+        If the CSS color can't be parsed then black (0.0, 0.0, 0.0, 1.0)
+        is returned.
+    """
+
+    def _fclamp(v: float) -> float:
+        """Clamp color value to range 0.0 - 1.0."""
+        return min(max(v, 0.0), 1.0)
+
+    def _iclamp(v: int) -> float:
+        """Clamp color value to range 0 - 255 and convert to float 0.0-1.0."""
+        return min(max(v, 0), 255) / 255
+
+    if isinstance(color, float):
+        gray = _fclamp(color)
+        return (gray, gray, gray, 1.0)
+
+    if isinstance(color, int):
+        # Assume range 0 - 255 if int type
+        gray = _iclamp(color)
+        return (gray, gray, gray, 1.0)
+
+    if isinstance(color, str):
+        if _RE_CSSHEX.match(color):
+            # Matches a CSS hex color with a possible alpha value
+            r, g, b, *a = csshex_to_rgb(color)
+        else:
+            r, g, b, *a = csscolor_to_rgb(color)
+        return (_iclamp(r), _iclamp(g), _iclamp(b), _iclamp(a[0]) if a else 1.0)
+
+    if isinstance(color, list | tuple) and len(color) >= 3:
+        # Guess if the color is ints 0-255 or floats 0.0-1.0.
+        # Note: this can be a problem for (1, 1, 1) and (0, 0, 0)
+        # if are all ints but it's supposed to be float white or black.
+        if is_frgba(color):
+            r, g, b, *a = color
+            # Explicitly convert all components to float in case
+            # there are one or more ints.
+            rgba = (
+                _fclamp(r),
+                _fclamp(g),
+                _fclamp(b),
+                (_fclamp(a[0]) if a else 1.0),
+            )
+        elif is_irgba(color):
+            # Assume int RGB where 0 <= c <= 255
+            r, g, b, *a = color
+            rgba = (
+                _iclamp(r),
+                _iclamp(g),
+                _iclamp(b),
+                (_iclamp(a[0]) if a else 1.0),
+            )
+        return rgba
+
+    return (0.0, 0.0, 0.0, 1.0)
+
+
 def rgba_to_cssa(rgba: Sequence[float | int]) -> tuple[str, float]:
-    """Convert RGB[A] values to a CSS hex color and opacity."""
-    color = csscolor_to_cssrgb(rgba)
-    opacity = rgba[3] if len(color) > 3 else 1.0
+    """Convert RGB[A] values to a CSS hex color and opacity.
+
+    Color will be in CSS hex form (ie "#c0c0c0") and
+    opacity will be a float 0.0 - 1.0.
+    """
+    color = csscolor_to_hexrgb(rgba)
+    opacity = float(rgba[3]) if len(color) > 3 else 1.0
     # Assume opacity 100% if == 1
-    if isinstance(opacity, int) and opacity > 1:
-        opacity = min(opacity, 255) / 255
+    if isinstance(opacity, int) or opacity > 1:
+        opacity = float(min(opacity, 255) / 255)
     return color, opacity
+
+
+def is_frgba(color: Sequence) -> bool:
+    """Return True if this is a RGB/A color spec with float values.
+
+    The values should be >= 0.0 and <= 1.0.
+
+    This can fail for the colors white and black if they are
+    supposed to be floats in the range (0.0 - 1.0) but are
+    initialized with ints.
+    For example (0, 0, 0) or (1, 1, 1).
+    """
+    return any(isinstance(c, float) for c in color)  # and max(*color) <= 1.0
+
+
+def is_irgba(color: Sequence) -> bool:
+    """Return True if this is a RGB/A color spec with all integer values.
+
+    Normally this would be integers in the range of 0-255. This does
+    not check the range in case the colors will be clipped later.
+
+    This can fail for the colors white and black if they are
+    supposed to be floats in the range (0.0 - 1.0) but are
+    initialized with ints.
+    For example (0, 0, 0) or (1, 1, 1).
+    """
+    return all(isinstance(c, int) for c in color)

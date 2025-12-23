@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 import geom2d
 from geom2d import transform2d
@@ -13,27 +13,23 @@ from . import svg
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
+    from typing import TypeAlias
 
     from geom2d.transform2d import TMatrix
-    from typing_extensions import TypeAlias
 
     from .svg import TElement
 
 logger = logging.getLogger(__name__)
 
-TGeom: TypeAlias = Union[
-    geom2d.Line,
-    geom2d.Arc,
-    geom2d.Ellipse,
-    geom2d.EllipticalArc,
-    geom2d.CubicBezier,
-]
+TGeom: TypeAlias = (
+    geom2d.Line
+    | geom2d.Arc
+    | geom2d.Ellipse
+    | geom2d.EllipticalArc
+    | geom2d.CubicBezier
+)
 
-TPathGeom: TypeAlias = Union[
-    geom2d.Line,
-    geom2d.Arc,
-    geom2d.CubicBezier,
-]
+TPathGeom: TypeAlias = geom2d.Line | geom2d.Arc | geom2d.CubicBezier
 
 
 def path_to_polypath(path: Iterable[TPathGeom]) -> Iterator[geom2d.Line]:
@@ -139,6 +135,9 @@ def svg_element_to_geometry(  # noqa: PLR0912
         A sub-path being a list of zero or more Line, Arc, Ellipse,
         EllipticalArc, or CubicBezier objects.
     """
+    if not element_transform:
+        element_transform = svg.get_transform_matrix(element)
+
     # Convert the element to a list of subpaths
     subpath_list: list[Sequence[TGeom]] = []
     tag = svg.strip_ns(element.tag)  # tag stripped of namespace part
@@ -157,9 +156,7 @@ def svg_element_to_geometry(  # noqa: PLR0912
             if ellipse_to_bezier:
                 subpath = geom2d.bezier.bezier_ellipse(ellipse)
             else:
-                subpath = [
-                    ellipse,
-                ]
+                subpath = [ellipse]
         elif tag == 'rect':
             subpath = convert_rect(element)
         elif tag == 'circle':
@@ -171,9 +168,7 @@ def svg_element_to_geometry(  # noqa: PLR0912
         else:
             raise TypeError('Unrecognized SVG element.')
         if subpath:
-            subpath_list = [
-                subpath,
-            ]
+            subpath_list = [subpath]
 
     if subpath_list:
         # Create a transform matrix that is composed of the
@@ -281,9 +276,7 @@ def parse_path_geom(  # noqa: PLR0912
     return subpath_list
 
 
-def convert_rect(
-    element: TElement,
-) -> list[geom2d.Line]:
+def convert_rect(element: TElement) -> list[geom2d.Line]:
     """Convert an SVG rect shape element to four geom2d.Line segments.
 
     Args:
@@ -324,9 +317,7 @@ def convert_line(element: TElement) -> list[geom2d.Line]:
     y1 = float(element.get('y1', 0))
     x2 = float(element.get('x2', 0))
     y2 = float(element.get('y2', 0))
-    return [
-        geom2d.Line((x1, y1), (x2, y2)),
-    ]
+    return [geom2d.Line((x1, y1), (x2, y2))]
 
 
 def convert_circle(

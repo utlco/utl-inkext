@@ -16,9 +16,9 @@
 
 # Replacing black with ruff...
 #BLACK="black -q"
-BLACK="ruff format -q"
-RUFF="ruff check -s"
-MYPY="mypy --no-error-summary"
+BLACK="uv run ruff format -q"
+RUFF="uv run ruff check -q"
+MYPY="uv run mypy --no-error-summary"
 
 # pylint is very slow, and is largely superseded by ruff
 # which is about 100 times faster.

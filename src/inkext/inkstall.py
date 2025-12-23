@@ -10,10 +10,8 @@ import argparse
 import io
 import pathlib
 import shutil
-import subprocess
+import subprocess  # noqa: S404
 import sys
-import urllib
-import urllib.parse
 import urllib.request
 import zipfile
 from typing import Any, NoReturn, TextIO
@@ -94,7 +92,9 @@ def main() -> None:
         type=pathlib.Path,
         nargs='?',
         default='.',
-        help='Extension name or project location. Default is current directory.',
+        help=(
+            'Extension name or project location. Default is current directory.'
+        ),
     )
     parser.add_argument(
         '--uninstall',
@@ -102,10 +102,7 @@ def main() -> None:
         help='Uninstall an Inkscape extension and exit.',
     )
     parser.add_argument(
-        '-q',
-        '--quiet',
-        action='store_true',
-        help='Suppress terminal output.',
+        '-q', '--quiet', action='store_true', help='Suppress terminal output.'
     )
     parser.add_argument(
         '-v',
@@ -167,11 +164,7 @@ def main() -> None:
 
     try:
         _install_all(
-            root_path,
-            inx_files,
-            inkext_path,
-            dependencies,
-            options.dev,
+            root_path, inx_files, inkext_path, dependencies, options.dev
         )
     except subprocess.CalledProcessError as e:
         if e.stdout:
@@ -264,7 +257,7 @@ def exit_error(
 def _run(*args: str) -> subprocess.CompletedProcess:
     """Run a shell command."""
     _info.verbose(*args)
-    cp = subprocess.run(args, capture_output=True, check=True, encoding='utf-8')
+    cp = subprocess.run(args, capture_output=True, check=True, encoding='utf-8')  # noqa: S603
     if cp.stdout:
         _info.verbose(cp.stdout)
     if cp.stderr:
@@ -281,7 +274,7 @@ def _fetch_repo(path: pathlib.Path) -> pathlib.Path:
         _run('git', 'clone', '--depth=1', str(path))
     elif path.suffix == '.zip':
         with (
-            urllib.request.urlopen(str(path)) as resp,
+            urllib.request.urlopen(str(path)) as resp,  # noqa: S310
             zipfile.ZipFile(io.BytesIO(resp.read())) as archive,
         ):
             # The root directory should be the first name in the archive.
@@ -294,9 +287,7 @@ def _fetch_repo(path: pathlib.Path) -> pathlib.Path:
     return repo_path
 
 
-def _create_venv(
-    venv_path: pathlib.Path,
-) -> None:
+def _create_venv(venv_path: pathlib.Path) -> None:
     """Create a virtualenv in extension location."""
     if not venv_path.exists():
         _info(f'Creating virtualenv {venv_path}')

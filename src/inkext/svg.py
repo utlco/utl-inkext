@@ -19,13 +19,14 @@ from . import css
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
+    from typing import TypeAlias
 
     from geom2d.transform2d import TMatrix
-    from typing_extensions import Self, TypeAlias
+    from typing_extensions import Self
 
 # : SVG Namespaces
 SVG_NS = {
-    #'': 'http://www.w3.org/2000/svg',
+    # '': 'http://www.w3.org/2000/svg',
     'svg': 'http://www.w3.org/2000/svg',
     'xlink': 'http://www.w3.org/1999/xlink',
     'xml': 'http://www.w3.org/XML/1998/namespace',
@@ -89,8 +90,7 @@ _RE_FLOAT = re.compile(
 
 def add_ns(tag: str, ns_map: dict[str, str], ns: str) -> str:
     """Prepend a mapped namespace to `tag`."""
-    uri = ns_map[ns]
-    return f'{{{uri}}}{tag}'
+    return f'{{{ns_map[ns]}}}{tag}'
 
 
 def svg_ns(tag: str) -> str:
@@ -113,6 +113,12 @@ def strip_ns(tag: str) -> str:
     return tag.rpartition('}')[2]
 
 
+def is_svg_node(node: TElement, tag: str) -> bool:
+    """Return True if the node matches the tag name."""
+    # Compare using qualified svg namespace and raw tag.
+    return bool(node.tag == tag or node.tag == svg_ns(tag))
+
+
 class SVGContext:
     """SVG document context."""
 
@@ -124,7 +130,7 @@ class SVGContext:
     document: TDocument
     doc_units: str = 'px'
     docroot: TElement
-    current_parent: TElement
+    current_parent: TElement  # Usually a group
 
     @classmethod
     def create_document(
@@ -181,7 +187,7 @@ class SVGContext:
 
         Args:
             document: An SVG ElementTree. The svg 'width' and 'height'
-                attributes MUST be specified.
+                attributes MUST be specified and should agree on units.
             doc_units: ViewBox width/height units
         """
         self.document = document
@@ -203,15 +209,23 @@ class SVGContext:
         # Get viewport width and height in user units
         svg_width = self.docroot.get('width')
         svg_height = self.docroot.get('height')
-        self.doc_units = scalar_unit(svg_width, default=scalar_unit(svg_height))
+        width_units = scalar_unit(svg_width)
+        height_units = scalar_unit(svg_height)
+        if width_units != height_units:
+            raise ValueError('SVG width/height units must match.')
+
+        # TODO: !!! This is incorrect - should be user_units
+        # Fix unit/scaling
+        self.doc_units = width_units
+
         viewport_width = self.unit_convert(svg_width, to_unit=self.doc_units)
         viewport_height = self.unit_convert(svg_height, to_unit=self.doc_units)
 
         # Get the viewBox to determine user units and root scale factor
-        viewboxattr = self.docroot.get('viewBox')
-        if viewboxattr is not None:
+        viewbox_attr = self.docroot.get('viewBox')
+        if viewbox_attr:
             p = re.compile(r'[,\s\t]+')
-            viewbox = [float(value) for value in p.split(viewboxattr)]
+            viewbox = [float(value) for value in p.split(viewbox_attr)]
         else:
             viewbox = [0, 0, viewport_width, viewport_height]
         viewbox_width = viewbox[2] - viewbox[0]
@@ -220,6 +234,7 @@ class SVGContext:
         # The viewBox can have a different size than the viewport
         # which causes the user agent to scale the SVG.
         # http://www.w3.org/TR/SVG/coords.html#ViewBoxAttribute
+        # Inkscape uses this to determine document size.
         # For this purpose we assume the aspect ratio is preserved
         # and that it's a degenerate case if not since it would be
         # difficult, if not impossible, to make a general scaling rule
@@ -227,21 +242,19 @@ class SVGContext:
         scale_width = viewbox_width / viewport_width
         scale_height = viewbox_height / viewport_height
         if not geom2d.float_eq(scale_width, scale_height):
-            raise ValueError('viewBox aspect ratio does not match viewport.')
+            raise ValueError('Non-uniform viewport/viewBox aspect ratio.')
 
         self.view_width = viewbox_width
         self.view_height = viewbox_height
-        self.view_scale = scale_width
+        self.view_scale = 1  # scale_width
         self.viewbox = viewbox
 
     def get_document_size(self) -> tuple[float, float]:
-        """Return width and height of document in user units as a tuple (W, H)."""
+        """Return width and height of document in user units as a tuple."""
         return (self.view_width, self.view_height)
 
     def unit2uu(
-        self,
-        value: str | float,
-        from_unit: str | None = None,
+        self, value: str | float, from_unit: str | None = None
     ) -> float:
         """Convert value to user (document) units.
 
@@ -500,12 +513,10 @@ class SVGContext:
         # Create a template mapping that fills in missing values
         # from the default map.
         mapping = {}
-        for key in default_map:
-            value = None
-            if template_map is not None:
-                value = template_map.get(key)
-            if value is None:
-                value = default_map[key]
+        for key, default_value in default_map.items():
+            value = default_value
+            if template_map and key in template_map:
+                value = template_map[key]
             if value is not None:
                 # If the value is a numeric type then it is assumed
                 # to already be in user units...
@@ -521,16 +532,6 @@ class SVGContext:
             template = string.Template(template_str)
             styles[name] = template.substitute(mapping)
         return styles
-
-    def node_is_group(self, node: TElement) -> bool:
-        """Return True if the node is an SVG group."""
-        return bool(node.tag == svg_ns('g') or node.tag == 'g')
-
-    def remove_node(self, node: TElement) -> None:
-        """Remove node from parent."""
-        parent = node.getparent()
-        if parent is not None:
-            parent.remove(node)
 
     def create_clip_path(self, path: TElement) -> TElement | None:
         """Create an SVG clipPath."""
@@ -737,12 +738,7 @@ class SVGContext:
         attrs['d'] = f'{mpart} {cpart}'
         return self._create_svgelem('path', attrs, style, parent)
 
-    def _format_curve(
-        self,
-        cp1: TPoint,
-        cp2: TPoint,
-        p2: TPoint,
-    ) -> str:
+    def _format_curve(self, cp1: TPoint, cp2: TPoint, p2: TPoint) -> str:
         return self._fmt_curve.format(
             self._scale(cp1[0]),
             self._scale(cp1[1]),
@@ -993,11 +989,7 @@ class SVGContext:
         etree.SubElement(
             marker,
             svg_ns('path'),
-            {
-                'd': d,
-                'style': style,
-                'transform': transform,
-            },
+            {'d': d, 'style': style, 'transform': transform},
         )
         return marker
 
@@ -1073,10 +1065,7 @@ class SVGContext:
     def _create_text_line(
         self, text: str, x: float, y: float, parent: TElement
     ) -> TElement:
-        attrs = {
-            'x': str(self._scale(x)),
-            'y': str(self._scale(y)),
-        }
+        attrs = {'x': str(self._scale(x)), 'y': str(self._scale(y))}
         tspan_elem = etree.SubElement(parent, svg_ns('tspan'), attrs)
         tspan_elem.text = text
         return tspan_elem
@@ -1088,6 +1077,18 @@ class SVGContext:
     def _scalep(self, p: TPoint) -> TPoint:
         """Scale the point value to viewbox."""
         return (p[0] * self.view_scale, p[1] * self.view_scale)
+
+
+def node_is_group(node: TElement) -> bool:
+    """Return True if the node is an SVG group."""
+    return bool(node.tag == svg_ns('g') or node.tag == 'g')
+
+
+def remove_node(node: TElement) -> None:
+    """Remove node from parent."""
+    parent = node.getparent()
+    if parent is not None:
+        parent.remove(node)
 
 
 def geompath_to_svgpath(
@@ -1120,7 +1121,7 @@ def geompath_to_svgpath(
         dparts = [f'M {first_point.to_svg(scale=scale)}']
         prev_type: type = geom2d.Line
         for segment in path:
-            add_prefix = bool(prev_type != type(segment))
+            add_prefix = bool(prev_type is not type(segment))
             dparts.append(
                 segment.to_svg_path(scale=scale, add_prefix=add_prefix)
             )
@@ -1396,6 +1397,7 @@ def explode_path(path_data: str) -> list:
 
 def reverse_path(path_data: str) -> str:
     """Reverse nodes in a path.
+
     Args:
         path_data: The ``d`` attribute value of a SVG path element.
 
@@ -1404,7 +1406,7 @@ def reverse_path(path_data: str) -> str:
     """
     subpaths = []
     subpath: list[tuple] = []
-    p1 = None
+
     # Split subpaths
     for cmd, params in parse_path(path_data):
         if cmd == 'M':
@@ -1426,7 +1428,7 @@ def reverse_path(path_data: str) -> str:
         subpath.reverse()
         cmd, params = subpath[0]
         reversed_path.append(('M', params[-2:]))
-        for (cmd1, params1), (cmd2, params2) in itertools.pairwise(subpath):
+        for (cmd1, params1), (_cmd2, params2) in itertools.pairwise(subpath):
             params1[-2:] = params2[-2:]
             if cmd1 == 'A':
                 # Reverse arc sweep direction
@@ -1504,13 +1506,16 @@ def random_id(prefix: str = '_svg', rootnode: TElement | None = None) -> str:
             Default is None in which case no search will be performed.
 
     Returns:
-        A random id string that has a fairly low chance of collision
-        with previously generated ids.
+        A random and unique id string.
     """
-    id_attr = f'{prefix}{random.randint(1, 2**31):d}'
+
+    def randid() -> str:
+        return f'{prefix}{random.randint(1, 2**31):d}'  # noqa: S311
+
+    id_attr = randid()
     if rootnode is not None:
         while get_node_by_id(rootnode, id_attr) is not None:
-            id_attr = f'{prefix}{random.randint(1, 2**31):d}'
+            id_attr = randid()
     return id_attr
 
 
@@ -1604,8 +1609,7 @@ def create_matrix_transform(matrix: TMatrix) -> str:
 
 def get_transform_matrix(node: TElement) -> TMatrix | None:
     """Get the transform matrix for an SVG node."""
-    transform_attr = node.get('transform')
-    if transform_attr:
+    if transform_attr := node.get('transform'):
         return parse_transform_attr(transform_attr)
     return None
 
@@ -1703,7 +1707,7 @@ def get_shape_elements(
                     yield node
 
 
-#def get_start_point(e: TElement) -> geom2d.P:
+# def get_start_point(e: TElement) -> geom2d.P:
 #    """Get the first point in the path element."""
 
 
@@ -1751,6 +1755,6 @@ def node_is_visible(
     if check_parent:
         parent = node.getparent()
         if parent is not None:
-            return node_is_visible(parent, _recurs=True)
+            return node_is_visible(parent, check_parent=True, _recurs=True)
 
     return True

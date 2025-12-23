@@ -29,9 +29,7 @@ INKSCAPE_NS = {
 INKSCAPE_NS.update(svg.SVG_NS)
 
 # Vendor specific namespace (in this case us)
-UTLCO_NS = {
-    'utlco': 'http://www.utlco.com/namespaces/utlco',
-}
+UTLCO_NS = {'utlco': 'http://www.utlco.com/namespaces/utlco'}
 # INKSCAPE_NS.update(UTLCO_NS)
 
 
@@ -67,12 +65,16 @@ class InkscapeSVGContext(svg.SVGContext):
     doc_name: str
     selected_layer_name: str | None = None
 
+    # Current layer transform applied to all layers
+    # when created.
+    # layer_transform: geom2d.TMatrix | None = None
+
     # Inkscape ruler units.
     # These should be same as SVG doc units, but for whatever reason
     # Inkscape can create documents that have different doc/ruler units.
     ruler_units: str
 
-    _current_layer_id: str | None = None
+    # _current_layer_id: str | None = None
 
     def __init__(self, document: TDocument) -> None:
         """Inkscape-specific SVG Context.
@@ -97,7 +99,7 @@ class InkscapeSVGContext(svg.SVGContext):
                 layer = self.get_node_by_id(layer_id)
                 if layer is not None:
                     self.current_parent = layer
-                    self.selected_layer_name = self.get_layer_name(layer)
+                    self.selected_layer_name = get_layer_name(layer)
 
         # Document clipping rectangle
         self.cliprect = geom2d.Box((0, 0), self.get_document_size())
@@ -184,6 +186,7 @@ class InkscapeSVGContext(svg.SVGContext):
         incr_suffix: bool = False,
         flipy: bool = False,
         tag: str | None = None,
+        transform: geom2d.TMatrix | None = None,
         parent: TElement | None = None,
     ) -> TElement:
         """Create an Inkscape layer or return an existing layer.
@@ -201,6 +204,7 @@ class InkscapeSVGContext(svg.SVGContext):
             tag: A layer tag added as an extended attribute.
                 Uses `utlco` namespace. This can be used to tag layers
                 with a custom label.
+            transform: Layer transform.
             parent: An optional parent element to append the new layer.
 
         Returns:
@@ -228,9 +232,30 @@ class InkscapeSVGContext(svg.SVGContext):
             if opacity is not None:
                 opacity = min(max(opacity, 0.0), 1.0)
                 layer_attrs['style'] = f'opacity: {opacity:.2f};'
+
             if flipy:
-                transfrm = f'translate(0, {self.view_height:g}) scale(1, -1)'
-                layer_attrs['transform'] = transfrm
+                # Flip Y axis? Mostly for TCNC
+                flip_transform = transform2d.matrix_scale_translate(
+                    1, -1, 0, self.view_height
+                )
+                if transform:
+                    transform = transform2d.compose_transforms(
+                        transform, flip_transform
+                    )
+                else:
+                    transform = flip_transform
+            # Apply transforms (if any) to this layer
+            # if self.layer_transform:
+            #    transform = transform2d.compose_transforms(
+            #        transform, self.layer_transform
+            #    )
+            if transform:
+                layer_attrs['transform'] = svg.create_matrix_transform(
+                    transform
+                )
+            # if flipy:
+            #    transfrm = f'translate(0, {self.view_height:g}) scale(1, -1)'
+            #    layer_attrs['transform'] = transfrm
             layer = etree.SubElement(parent, svg.svg_ns('g'), layer_attrs)
             # layer = etree.SubElement(parent, 'g', layer_attrs)
         elif clear:
@@ -240,43 +265,6 @@ class InkscapeSVGContext(svg.SVGContext):
         # if 'transform' in layer.attrib:
         #    del layer.attrib['transform']
         return layer
-
-    def set_layer_name(self, layer: TElement, name: str) -> None:
-        """Rename an Inkscape layer."""
-        layer.set(inkscape_ns('label'), name)
-
-    def get_layer_name(self, layer: TElement) -> str | None:
-        """Return the name of the Inkscape layer."""
-        return typing.cast(str, layer.get(inkscape_ns('label')))
-
-    def get_parent_layer(self, node: TElement) -> TElement | None:
-        """Get the layer that the node resides in.
-
-        Returns:
-            A layer, or None if the node is not in a layer.
-        """
-        # TODO: it's probably better/faster to recursively climb
-        # the parent chain until docroot or layer is found.
-        # This assumes that Inkscape still doesn't support sub-layers
-        layers = self.document.findall(
-            '//svg:g[@inkscape:groupmode="layer"]', namespaces=INKSCAPE_NS
-        )
-        for layer in layers:
-            if node in layer.iter():
-                return layer
-        # layers = self.document.xpath(
-        #    '//svg:g[@inkscape:groupmode="layer"]', namespaces=INKSCAPE_NS
-        # )
-        # if isinstance(layers, Iterable):
-        #    for layer in layers:
-        #        if isinstance(layer, TElement) and node in layer.iter():
-        #            return layer
-        return None
-
-    def layer_is_locked(self, layer: TElement) -> bool:
-        """Check if the layer is locked."""
-        val = layer.get(sodipodi_ns('insensitive'))
-        return val is not None and val.lower() == 'true'
 
     def find(self, path: str) -> TElement | None:
         """Find an element in the current document.
@@ -298,34 +286,27 @@ class InkscapeSVGContext(svg.SVGContext):
         return [
             node
             for node in self.docroot
-            if self.is_layer(node) and svg.node_is_visible(node)
+            if is_layer(node) and svg.node_is_visible(node)
         ]
 
-    def get_layer_elements(self, layer: TElement) -> list[TElement]:
-        """Get document elements by layer.
+    # def get_layer_elements(self, layer: TElement) -> list[TElement]:
+    #    """Get document elements by layer.
 
-        Returns all the visible child elements of the given layer.
+    #    Returns all the visible child elements of the given layer.
 
-        Args:
-            layer: The layer root element.
+    #    Args:
+    #        layer: The layer root element.
 
-        Returns:
-            A (possibly empty) list of visible elements.
-        """
-        if svg.node_is_visible(layer):
-            return [
-                node
-                for node in layer
-                if svg.node_is_visible(node, check_parent=False)
-            ]
-        return []
-
-    def is_layer(self, node: TElement) -> bool:
-        """Determine if the element is an Inkscape layer node."""
-        if self.node_is_group(node):
-            layer_name = self.get_layer_name(node)
-            return bool(layer_name is not None and layer_name)
-        return False
+    #    Returns:
+    #        A (possibly empty) list of visible elements.
+    #    """
+    #    if svg.node_is_visible(layer):
+    #        return [
+    #            node
+    #            for node in layer
+    #            if svg.node_is_visible(node, check_parent=False)
+    #        ]
+    #    return []
 
     def get_shape_elements_layers(
         self,
@@ -335,7 +316,7 @@ class InkscapeSVGContext(svg.SVGContext):
         skip_layers: list[str] | None = None,
         accumulate_transform: bool = True,
     ) -> list[list[tuple[TElement, geom2d.TMatrix | None]]]:
-        """Get all shape elements in an element tree.
+        """Get all shape elements in an element tree bundled by layer.
 
         Separate top-level layers into an array of layer sub-elements.
 
@@ -360,16 +341,15 @@ class InkscapeSVGContext(svg.SVGContext):
                 if True. Default is True.
 
         Returns:
-            A possibly empty list of 2-tuples consisting of
+            A list of lists of 2-tuples consisting of
             SVG element and accumulated transform.
         """
         if elements is None:
             elements = self.docroot.iterchildren()
 
-        layers = []
+        layers: list[list[tuple[TElement, geom2d.TMatrix | None]]] = [[]]
         for node in elements:
-            if self.is_layer(node):
-                layer_name = self.get_layer_name(node)
+            if is_layer(node):
                 layers.append(
                     self._get_shape_nodes_recurs(
                         node,
@@ -381,7 +361,7 @@ class InkscapeSVGContext(svg.SVGContext):
                     )
                 )
             else:
-                layers.append(
+                layers[0].extend(
                     self._get_shape_nodes_recurs(
                         node,
                         shapetags,
@@ -444,7 +424,7 @@ class InkscapeSVGContext(svg.SVGContext):
             )
         return shapes
 
-    def _get_shape_nodes_recurs(  # noqa: PLR0912 too-many-branches
+    def _get_shape_nodes_recurs(
         self,
         node: TElement,
         shapetags: Iterable[str],
@@ -454,51 +434,44 @@ class InkscapeSVGContext(svg.SVGContext):
         accumulate_transform: bool,
     ) -> list[tuple[TElement, geom2d.TMatrix | None]]:
         """Recursively get all shape elements in an element tree."""
+        # Skip non-visible nodes...
         if not svg.node_is_visible(node, check_parent=check_parent):
             return []
 
-        # first apply the current transform matrix to this node's transform
-        node_transform = svg.parse_transform_attr(node.get('transform'))
+        node_transform = svg.get_transform_matrix(node)
         if accumulate_transform:
-            if parent_transform is None:
-                parent_transform = self.get_parent_transform(node)
-            if not node_transform:
-                node_transform = parent_transform
-            elif parent_transform:
-                node_transform = transform2d.compose_transform(
-                    parent_transform, node_transform
-                )
+            # Apply the parent transform matrix to this node's transform
+            node_transform = self._accumulated_transform(
+                node, node_transform, parent_transform
+            )
 
-        shapes = []
-        if self.node_is_group(node):
-            if self.is_layer(node) and skip_layers:
-                layer_name = self.get_layer_name(node)
-                # logger.debug('layer: %s', layer_name)
-                if layer_name:
-                    for skip_layer in skip_layers:
-                        if re.match(skip_layer, layer_name):
-                            # logger.debug('skipping layer: %s', layer_name)
-                            return []
+        if (
+            svg.node_is_group(node)
+            and skip_layers
+            and not match_layer_name(node, skip_layers)
+        ):
             # Recursively traverse group children
+            shapes = []
             for child_node in node:
                 subnodes = self._get_shape_nodes_recurs(
                     child_node,
                     shapetags,
                     node_transform,
-                    False,
-                    skip_layers,
-                    accumulate_transform,
+                    check_parent=False,
+                    skip_layers=skip_layers,
+                    accumulate_transform=accumulate_transform,
                 )
                 shapes.extend(subnodes)
-        elif node.tag == svg.svg_ns('use') or node.tag == 'use':
+            return shapes
+
+        if svg.is_svg_node(node, 'use'):
             # A <use> element refers to another SVG element via an
             # xlink:href="#id" attribute.
-            refid = node.get(svg.xlink_ns('href'))
-            if refid:
+            if refid := node.get(svg.xlink_ns('href')):
                 # [1:] to ignore leading '#' in reference
                 refnode = self.get_node_by_id(refid[1:])
                 # TODO: Can the referred node not be visible?
-                if refnode is not None:  # and svg.node_is_visible(refnode):
+                if refnode := self.get_node_by_id(refid[1:]):
                     # Apply explicit x,y translation transform
                     x = float(node.get('x', '0'))
                     y = float(node.get('y', '0'))
@@ -510,18 +483,95 @@ class InkscapeSVGContext(svg.SVGContext):
                             )
                         else:
                             node_transform = translation
-                    subnodes = self._get_shape_nodes_recurs(
+                    return self._get_shape_nodes_recurs(
                         refnode,
                         shapetags,
                         node_transform,
-                        False,
-                        skip_layers,
-                        accumulate_transform,
+                        check_parent=False,
+                        skip_layers=skip_layers,
+                        accumulate_transform=accumulate_transform,
                     )
-                    shapes.extend(subnodes)
-        elif svg.strip_ns(node.tag) in shapetags:
-            shapes.append((node, node_transform))
-        return shapes
+            return []
+
+        if svg.strip_ns(node.tag) in shapetags:
+            return [(node, node_transform)]
+
+        return []
+
+    def _accumulated_transform(
+        self,
+        node: TElement,
+        node_transform: geom2d.TMatrix | None,
+        parent_transform: geom2d.TMatrix | None,
+    ) -> geom2d.TMatrix | None:
+        if parent_transform is None:
+            parent_transform = self.get_parent_transform(node)
+        if node_transform is None:
+            return parent_transform
+        if parent_transform:
+            return transform2d.compose_transform(
+                parent_transform, node_transform
+            )
+        return None
+
+
+def is_layer(node: TElement) -> bool:
+    """Determine if the element is an Inkscape layer node."""
+    return (
+        svg.node_is_group(node)
+        and node.get(inkscape_ns('groupmode')) == 'layer'
+    )
+
+
+def set_layer_name(layer: TElement, name: str) -> None:
+    """Rename an Inkscape layer."""
+    layer.set(inkscape_ns('label'), name)
+
+
+def get_layer_name(node: TElement) -> str | None:
+    """Return the name of the Inkscape layer.
+
+    Return:
+        The layer name if the node is a layer or is
+        a descendant of a layer. Otherwise None.
+    """
+    layer: TElement | None = node
+    if not is_layer(node):
+        layer = get_parent_layer(node)
+
+    if layer is not None:
+        return layer.get(inkscape_ns('label'))
+
+    return None
+
+
+def match_layer_name(node: TElement, patterns: list[str]) -> bool:
+    """Return true if the layer name matches any of the names in the list.
+
+    The name patterns can be regular expressions.
+    """
+    if layer_name := get_layer_name(node):
+        return any(re.match(pat, layer_name) for pat in patterns)
+    return False
+
+
+def get_parent_layer(node: TElement) -> TElement | None:
+    """Get the Inkscape layer that the node resides in.
+
+    Returns:
+        A layer, or None if the node is not in a layer.
+    """
+    parent = node.getparent()
+    # Hike up the parent chain until a layer is found.
+    while parent is not None and not is_layer(parent):
+        parent = parent.getparent()
+    return parent
+
+
+def layer_is_locked(layer: TElement) -> bool:
+    """Check if the layer is locked."""
+    val = layer.get(sodipodi_ns('insensitive'))
+    return bool(val and val.lower() == 'true')
 
 
 def create_inkscape_document(

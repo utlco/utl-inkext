@@ -29,9 +29,7 @@ if TYPE_CHECKING:
 _ = gettext.gettext
 logger = logging.getLogger(__name__)
 
-DEBUG = bool(
-    os.environ.get('UTL_DEBUG', '').lower() in {'t', 'true', 'y', 'yes'}
-)
+DEBUG = bool('UTL_DEBUG' in os.environ)
 """True if debug layer or debug logging is enabled."""
 
 
@@ -65,10 +63,11 @@ def csscolor(value: str | int) -> str:
     return 'none'
 
 
-def rgbacolor(value: str | int) -> tuple:
+def rgbacolor(value: str | int) -> tuple[float, float, float, float]:
     """Inkscape-argparse type.
 
-    Convert an Inkscape color widget value to a RGBA tuple (R, G, B, A).
+    Convert a CSS color or an Inkscape color widget value
+    to an RGBA tuple (R, G, B, A).
     """
     rgba = _rgbacolor(value)
     if rgba:
@@ -76,7 +75,7 @@ def rgbacolor(value: str | int) -> tuple:
     return (0, 0, 0, 0)
 
 
-def _rgbacolor(value: str | int) -> tuple | None:
+def _rgbacolor(value: str | int) -> tuple[float, float, float, float] | None:
     """Convert a CSS-style hex string or Inkscape color picker value to RGBA."""
     r: float = 0
     g: float = 0
@@ -144,7 +143,18 @@ def percent(value: str | float) -> float:
         ) from e
 
 
+def filepath(value: str) -> pathlib.Path:
+    """Argparse type: Convert a path string to a pathlib.Path."""
+    try:
+        return pathlib.Path(value)
+    except (TypeError, ValueError) as e:
+        # This is highly unlikely as Path takes pretty much any string
+        raise argparse.ArgumentTypeError(f'Invalid file path: {value}') from e
+
+
 class _DocUnits:
+    """Wrapper for docunits type."""
+
     value: str | float
 
     def __init__(self, value: str | float) -> None:
@@ -180,6 +190,9 @@ def errormsg(
     print(*args, file=sys.stderr, **kwargs)  # noqa: T201
     if exit_status is not None:
         sys.exit(exit_status)
+
+
+debug = errormsg
 
 
 class ExtensionError(Exception):
@@ -250,7 +263,7 @@ class InkscapeExtension:
             or self.options.create_debug_layer
         ):
             os.environ['UTL_DEBUG'] = 'true'
-            global DEBUG
+            global DEBUG  # noqa: PLW0603
             DEBUG = True
 
         # The option to create a new document supersedes the
@@ -293,15 +306,14 @@ class InkscapeExtension:
 
         try:
             if self.options.output_file:
-                pp = logger.getEffectiveLevel() == logging.DEBUG
                 with self.options.output_file.open('w', encoding='utf8') as f:
-                    self.svg.write_document(f, pretty_print=pp)
+                    self.svg.write_document(f, pretty_print=DEBUG)
             else:
                 self.svg.write_document(sys.stdout)
         except OSError as e:
             errormsg(f'Unable to write SVG output: {e}', exit_status=1)
 
-    def effect(self) -> None:
+    def effect(self) -> None:  # noqa: PLR6301
         """Extensions override this method to do the actual work.
 
         Raises:
@@ -364,7 +376,9 @@ class InkscapeExtension:
             path = subpaths[subpath_index]
             yield path[node_index].p1 if node_index < len(path) else path[-1].p2
 
-    def add_options(self, parser: argparse.ArgumentParser) -> None:
+    def add_options(
+        self, parser: argparse.ArgumentParser
+    ) -> argparse.Namespace | None:
         """Add CLI option.
 
         Subclasses override this to add any option arguments
@@ -385,9 +399,7 @@ class InkscapeExtension:
         geom2d.debug.set_svg_context(self.debug_svg)
 
     def _create_log(
-        self,
-        log_path: str | os.PathLike | None,
-        log_level: str | None,
+        self, log_path: str | os.PathLike | None, log_level: str | None
     ) -> None:
         """Create a log file for debug output.
 
@@ -408,9 +420,7 @@ class InkscapeExtension:
             log_path, default_parent='~', default_suffix='.log'
         )
         logging.basicConfig(
-            filename=log_path,
-            filemode='w',
-            level=log_level.upper(),
+            filename=log_path, filemode='w', level=log_level.upper()
         )
         logger.info(
             'Log started %s, level=%s',
@@ -471,9 +481,7 @@ class InkscapeExtension:
             help=_('id:subpath:position of selected node'),
         )
         # Used by Inkscape extension dialog to keep track of current tab
-        parser.add_argument(
-            '--active-tab',
-        )
+        parser.add_argument('--active-tab')
         parser.add_argument(
             '--output-file', '-o', type=pathlib.Path, help=_('Output file.')
         )
@@ -492,9 +500,7 @@ class InkscapeExtension:
         )
         parser.add_argument('--log-level', default='DEBUG', help=_('Log level'))
         parser.add_argument(
-            '--log-filename',
-            default=None,
-            help=_('Full pathname of log file'),
+            '--log-filename', default=None, help=_('Full pathname of log file')
         )
 
         # Path to input file if any
@@ -505,10 +511,11 @@ class InkscapeExtension:
             help='Path name of input file',
         )
 
-        # Allow subclasses to add more options
-        self.add_options(parser)
+        # Allow subclasses to add more options and
+        # optionally provide a namespace.
+        namespace = self.add_options(parser)
 
-        return parser.parse_args(argv)
+        return parser.parse_args(argv, namespace=namespace)
 
     def post_process_options(self) -> None:
         """Fix CLI option values after parsing SVG document.
@@ -653,6 +660,8 @@ def inkrgb_to_styles(
         elif opacity < 1:
             stylemap['fill-opacity'] = f'{opacity:.3f}'
         stylemap['fill'] = color
+    else:
+        stylemap['fill'] = 'none'
     if stroke:
         color, opacity = css.rgba_to_cssa(stroke)
         if opacity == 0:
